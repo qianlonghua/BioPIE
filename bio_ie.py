@@ -1,7 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# routines for processing biomedical abstracts
-
+# routines for processing biomedical NER and RE
 
 import os.path
 
@@ -114,9 +113,6 @@ if __name__ == '__main__':
         #main('v', 'ner', 'GPRO',('train','dev'), 'aa', 'Bert', tcfg, epo=0)
         #main('r', 'ner', 'LINN', ['train'], 'f', 'Bert', tcfg)
         #main('r', 'ner', 'S800', ['train'], 'a', 'Bert', tcfg)
-        # QA
-        #main('c', 'asq', 'BIOASQ4B', ['train', 'dev', 'test'], 'aaa', 'Bert', tcfg)
-        #main('c', 'asq', 'BIOASQ4B', ['train'], 'a', 'Bert', tcfg)
         #
         """ data formats:
         i - instance-level like CoNLL2003, JNLPBA2004
