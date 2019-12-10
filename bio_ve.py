@@ -454,6 +454,6 @@ if __name__ == '__main__':
         tcfg = TrainConfig(epochs=3, valid_ratio=0, fold_num=10, fold_num_run=1,
                            max_seq_len=100, batch_size=32,
                            bld_ent_types=elist, sent_simplify=1, diff_ent_type=0)
-        # VE & SBEL
+        # VE
         main('r', 've', 'GE09', ('train', 'dev'), 'aa', 'Bert', tcfg, epo=0)
         #
