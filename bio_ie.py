@@ -93,7 +93,7 @@ if __name__ == '__main__':
         tcfg = TrainConfig(epochs=3, valid_ratio=0, fold_num=10, fold_num_run=1,
                            max_seq_len=100, batch_size=32,
                            bld_ent_types=elist, diff_ent_type=0)
-        # RERE
+        # RE
         #main('v', 're', 'SMV', ('train','test'), 'ii', 'Bert', tcfg, epo=0, fold=0, folds=range(3))     # SMV
         #main('v', 're', 'SMV', ('train', 'test'), 'ii', 'Bert', tcfg, epo=0)  # SMV
         #main('tv', 're', 'PPI', ['train'], 'i', 'Bert', tcfg, epo=0)       # PPI
