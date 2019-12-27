@@ -50,6 +50,7 @@ import os.path
 import sys
 import shutil
 import json
+import numpy as np
 
 # BE_DICT = {'GE':0, 'CH':1, 'DI':2, 'TR':3, 'EN':4, 'BP':5}
 # BioENTs = ('GENE', 'CHEM', 'DISE', 'TRIG', 'ENTI', 'BPRO')
@@ -57,6 +58,21 @@ import json
 
 def clear_gpu_processes():
     os.system('/home/qlh/gpu.sh')
+
+def npdiv0(a, b):
+    return np.divide(a, b, out=np.zeros_like(a), where=b!=0)
+
+def percent(a, b):
+    return a / b * 100 if b != 0 else 0
+
+def div0(a, b):
+    return a / b if b != 0 else 0
+
+def calc_prf(tp, fp, fn):
+    p = percent(tp, float(tp + fp))
+    r = percent(tp, float(tp + fn))
+    f1 = div0(2 * p * r, p + r)
+    return p, r, f1
 
 def is_upper(ch):
     return ch in ('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
@@ -127,9 +143,9 @@ def disp_total_files(file_no,total_no):
     return
 
 # make gazeteer
-def make_gazeteer_dict(filename,fcoding):
+def make_gazeteer_dict(filename, fcoding):
     temp_dict={}
-    lines=file_line2list(filename,fcoding,True,True)
+    lines=file_line2list(filename, fcoding, True, True)
     for i in range(len(lines)):
         items=lines[i].split('\t')
         if items[0] not in temp_dict:
@@ -137,11 +153,11 @@ def make_gazeteer_dict(filename,fcoding):
     return temp_dict
 
 def print_list(mlist):
-    for i in range(len(mlist)):  print(i,mlist[i])
+    for i in range(len(mlist)):  print(i, mlist[i])
     return
 
 def print_dict(mdict):
-    for key in sorted(mdict):  print(key,mdict[key])
+    for key in sorted(mdict):  print(key, mdict[key])
     return
 
 # convert number to string with thousand separators
@@ -157,9 +173,9 @@ def safe_remove_file(sfilename):
     return False
 
 # copy the sfilename if it exists, others remove tfilename if it exists
-def safe_copy_file(sfilename,tfilename):
+def safe_copy_file(sfilename, tfilename):
     if os.path.exists(sfilename):
-        shutil.copyfile(sfilename,tfilename)
+        shutil.copyfile(sfilename, tfilename)
         return True
     safe_remove_file(tfilename)
     return False
@@ -171,7 +187,6 @@ def file_line2string(sfilename, fcoding='utf8', lowerID=False, verbose=0):
     finput.close()
     if text.endswith('\n'): text = text[:-1]
     if lowerID: text = text.lower()
-
     return text
 
 #write a string a file
@@ -196,7 +211,7 @@ def file_line2list(sfilename, fcoding='utf8', lowerID=False, stripID=True, verbo
 
 # read a file into an array separated by sepch
 def file_line2array(sfilename, fcoding='utf8', lowerID=False, stripID=True, sepch='\t', verbose=0):
-    lines = file_line2list(sfilename, fcoding=fcoding, lowerID=lowerID, stripID=stripID, verbose=verbose)
+    lines = file_line2list(sfilename, fcoding, lowerID, stripID, verbose)
     arrays = []
     for line in lines:
         arrays.append(line.split(sepch))
@@ -217,23 +232,23 @@ def list_list2string(lines):
         dlines.append('\t'.join(line))
     return dlines
 
-def fixedfile_list2line(lines,dfilename,fcoding):
+def fixedfile_list2line(lines, dfilename, fcoding, fsize):
     # get filename and extension
     m=re.match(r'(.*?)\.([^\.]*)$',dfilename)
-    if m:   dfile,dext=m.group(1),m.group(2)
-    else:   dfile,dext=dfilename,''
+    if m:   dfile, dext = m.group(1), m.group(2)
+    else:   dfile, dext = dfilename, ''
     #
-    file_index=0
-    file_size=0
-    foutput=open('%s_%02d.%s' % (dfile,file_index,dext),'w',encoding=fcoding)
+    file_index = 0
+    file_size = 0
+    foutput = open('%s_%02d.%s' % (dfile, file_index, dext), 'w', encoding=fcoding)
     for line in lines:
-        file_size+=len(line)
-        if file_size>fsize:
+        file_size += len(line)
+        if file_size > fsize:
             foutput.close()
-            file_index+=1
-            file_size=len(line)
-            foutput=open('%s_%02d.%s' % (dfile,file_index,dext),'w',encoding=fcoding)
-        print(line,file=foutput)
+            file_index += 1
+            file_size = len(line)
+            foutput = open('%s_%02d.%s' % (dfile, file_index, dext), 'w', encoding=fcoding)
+        print(line, file=foutput)
     foutput.close()
     return
 
@@ -243,13 +258,13 @@ def lexicon_load(dict_file):
     print('Loading the dictionary file %s (5000/.)' % dict_file)
     i=0
     ce_dict={}
-    dfile=open(dict_file,'r',encoding='utf8')
+    dfile=open(dict_file, 'r', encoding='utf8')
     for line in dfile.readlines():
-        line=line.strip()
-        i+=1
-        if i%5000==0:   write('.')
-        mlist=line.split(' ')
-        ce_dict[mlist[0]+mlist[1].lower()]=float(mlist[2])
+        line = line.strip()
+        i += 1
+        if i % 5000 == 0:   write('.')
+        mlist = line.split(' ')
+        ce_dict[mlist[0]+mlist[1].lower()] = float(mlist[2])
     print('OK')
     return ce_dict
 
@@ -258,7 +273,7 @@ def lexicon_load(dict_file):
 # rvsID: True-reverse,False-sequential,
 # initid: whether conversion to integer is performed for item 0 and 1 respectively
 # lowerID: whether the key is lowercased
-def mapping_dict_load(pID, mfilename,fcoding,msep,rvsID,intids,lowids):
+def mapping_dict_load(pID, mfilename, fcoding, msep, rvsID, intids, lowids):
     mprint(pID, 'Loading the mapping file: %s (10,000/.)' % mfilename)
     map_dict={}
     lines=file_line2list(mfilename,fcoding,False,True)
@@ -267,62 +282,62 @@ def mapping_dict_load(pID, mfilename,fcoding,msep,rvsID,intids,lowids):
         mlist=lines[i].split(msep)
         if lowids:     # convert into lowercase if necessary
             for j in range(2):
-                if lowids[j]:  mlist[j]=mlist[j].lower()
+                if lowids[j]:  mlist[j] = mlist[j].lower()
         if intids:     # convert into integers if necessary
             for j in range(2):
-                if intids[j]:  mlist[j]=int(mlist[j])
-        if rvsID:   mlist=[mlist[1],mlist[0]]
+                if intids[j]:  mlist[j] = int(mlist[j])
+        if rvsID:   mlist = [mlist[1], mlist[0]]
         if mlist[0] not in map_dict:
-            map_dict[mlist[0]]=mlist[1]
+            map_dict[mlist[0]] = mlist[1]
         else:
-            print(mlist,map_dict[mlist[0]])
-            dupcnt+=1
-        if i % 10000==0:   mwrite(pID, '.')
+            print(mlist, map_dict[mlist[0]])
+            dupcnt += 1
+        if i % 10000 == 0:   mwrite(pID, '.')
     mprint(pID, 'OK')
-    if dupcnt!=0:    print('%d duplicate items' % dupcnt)
+    if dupcnt != 0:    print('%d duplicate items' % dupcnt)
     return map_dict
 
 # save mapping dictionary file
-def mapping_dict_save(mdict,mfilename,fcoding):
-    mlines=[]
+def mapping_dict_save(mdict, mfilename, fcoding):
+    mlines = []
     for key in sorted(mdict.keys()):
-        mlines.append('%s\t%s' % (key,mdict[key]))
-    file_list2line(mlines,mfilename,fcoding)
+        mlines.append('%s\t%s' % (key, mdict[key]))
+    file_list2line(mlines, mfilename, fcoding)
     return
 
 # load a dictionary with multiple key values
-def multi_mapping_dict_load(mfilename,fcoding,msep,rvsID,intids,lowids):
+def multi_mapping_dict_load(mfilename, fcoding, msep, rvsID, intids, lowids):
     print('Loading the multi-mapping file: %s (10,000/.)' % mfilename)
-    map_dict={}
-    lines=file_line2list(mfilename,fcoding,False,True)
+    map_dict = {}
+    lines = file_line2list(mfilename, fcoding, False, True)
     for i in range(len(lines)):
-        mlist=lines[i].split(msep)
+        mlist = lines[i].split(msep)
         if lowids:     # convert into lowercase if necessary
             for j in range(2):
-                if lowids[j]:  mlist[j]=mlist[j].lower()
+                if lowids[j]:  mlist[j] = mlist[j].lower()
         if intids:     # convert into integers if necessary
             for j in range(2):
-                if intids[j]:  mlist[j]=int(mlist[j])
-        if rvsID:  mlist=[mlist[1],mlist[0]]
+                if intids[j]:  mlist[j] = int(mlist[j])
+        if rvsID:  mlist = [mlist[1],mlist[0]]
         if mlist[0] not in map_dict:
-            map_dict[mlist[0]]=[mlist[1]]
+            map_dict[mlist[0]] = [mlist[1]]
         else:
             map_dict[mlist[0]].append(mlist[1])
-        if i % 10000==0:   write('.')
+        if i % 10000 == 0:   write('.')
     print('OK')
     return map_dict
 
 # return a reverse dictionary for the input dictionary
 def reverse_dict_create(pID, sdict):
     mprint(pID, 'Creating the reverse dictionary (10,000/.)')
-    ddict={}
-    i=0
+    ddict = {}
+    i = 0
     for key in sdict.keys():
-        value=sdict[key]
+        value = sdict[key]
         if value not in ddict.keys():   # the value has existed
-            ddict[value]=key
-        i+=1
-        if i%10000==0:  mwrite(pID, '.')
+            ddict[value] = key
+        i += 1
+        if i % 10000 == 0:  mwrite(pID, '.')
     mprint(pID, 'OK')
     return ddict
 
@@ -342,7 +357,6 @@ def load_json_file(filename=None):
         with open(filename, 'r') as fjson:
             jdict = json.load(fjson)
     return jdict
-
 
 def load_word_voc_file(filename=None, verbose=0):
     if not os.path.exists(filename): return None

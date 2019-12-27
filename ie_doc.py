@@ -320,14 +320,14 @@ ENT_BRACKET_ID = 0  # surrounded by []
 
 # return a sentence with all bio entity placeholders replaced by CHEM_1, GENE_1,...
 # bld_ent_seq: 0-type only, 1-type+seq_no
-def blind_text_entity_placeholders(text, bld_ent_seq=0):
+def blind_text_entity_placeholders(text, bld_ent_mode=0):
     words = text.split(' ')
     edict = {}
     for i, word in enumerate(words):
         etype, emid = is_bio_entity(word)
         if not emid: continue    # not an entity mention
         # increase entity sequence no like GENE_1, CHEM_1, DISE_1
-        if not bld_ent_seq:
+        if not bld_ent_mode:
             words[i] = etype
         else:
             if etype not in edict:  edict[etype] = 1
@@ -364,16 +364,15 @@ class ieDoc(object):
         self.title = title
         self.otext = text   # original text
         self.text = text    # preprocessed text
-        # these 2 fields are for sentence, not for document
+        # these 4 fields are for sentence, not for document
         self.words = []
         self.offsets = []   # offset of each word in the original document
+        self.bwords = []
+        self.boffsets = []
 
         self.emdict = {}    # entity mention dict from id-->index
         self.emlist = []    # entity mention list
         self.remlist = []   # recognized entity mentions
-
-
-        self.qadict = {}     # QA dict
 
         self.sntlist = []   # sentence list for a doc
         self.crfdict = defaultdict(list)    # coreference dictionary from an entity to its referents
@@ -412,15 +411,12 @@ class ieDoc(object):
         self.emlist.sort()
         self._index_entity_mentions()  # reindex entity dict from id->index_no
 
-    def append_question_answer(self, qid, qa):
-        self.qadict[qid] = qa
-
     # add an entity to a sentence, move to ie_conversion.py
-    def add_entity_mention_to_sentence(self, sent_no, feats, eno, spos, epos, type):
+    def add_entity_mention_to_sentence(self, did, sent_no, feats, eno, spos, epos, type):
         # eid = '{}-{}-{}'.format(cps_file, sent_no, eno)
         eid = 'T{}'.format(eno)
         ename = '_'.join([feat[0] for feat in feats[spos:epos]])
-        em = EntityMention(id=eid, type=type, name=ename, lineno=sent_no, hsno=spos, heno=epos)
+        em = EntityMention(did=did, id=eid, type=type, name=ename, lineno=sent_no, hsno=spos, heno=epos)
         self.append_entity_mention(em)
         return
 
@@ -526,6 +522,7 @@ class ieDoc(object):
                             snt.offsets.append([j, i])
                             break
                     i += 1
+            #print(snt.offsets)
             # check whether all words are aligned
             if verbose > 0 and len(snt.words) != len(snt.offsets):
                 print('\nWords and offsets do not match!')
@@ -594,7 +591,7 @@ class ieDoc(object):
 
     # generate sentences for a document
     # fmt: 's'-sentence, 'a'-abstract, 'f'-full-text
-    def generate_document_sentences(self, tcfg, Doc, task='re', fmt='a', verbose=0):
+    def generate_document_sentences(self, tcfg, Doc, task='re', fmt='a'):
         self.replace_bio_special_tokens(BIO_SPECIAL_CHARS)
         # for BEL, do not split the sentence
         lines = split_bio_sentences(fmt, self.text)
@@ -607,9 +604,9 @@ class ieDoc(object):
             # make a sentence
             snt = Doc(id=self.id, no=i, title=self.title, text=dline)
             self.sntlist.append(snt)
-        # align the original document and its sentences
-        self.align_document_with_sentences(verbose=verbose)
-        self.transfer_entity_mentions_from_document_to_sentences(verbose=verbose)
+        # align the original document and its sentences for NER
+        self.align_document_with_sentences(verbose=tcfg.verbose)
+        self.transfer_entity_mentions_from_document_to_sentences(verbose=tcfg.verbose)
         return
 
     # recover entity mentions from a sentence in a document
@@ -654,33 +651,21 @@ class ieDoc(object):
         snt.text = ' '.join(ntokens)
         return
 
-    def collect_ner_confusion_matrix(self, confusions, etypedict):
-        # collect true/false positives
-        for em in self.emlist:
-            gno = etypedict[em.type]
-            pno = -1    # Entity --> O
-            if em.gpno >= 0:    # matched
-                pno = etypedict[self.remlist[em.gpno].type]
-            confusions[gno][pno] += 1
-        # collect false positives
-        for rem in self.remlist:
-            if rem.gpno < 0 and rem.hsno >= 0 and rem.heno >= 0:  # O --> valid BERT entity
-                pno = etypedict[rem.type]
-                confusions[-1][pno] += 1
-                if rem.hsno < 0 or rem.heno < 0:    # for Bert fragments
-                    print(rem)
+
+    def match_gold_pred_instances(self):
+        match_gold_pred_entity_mentions(self)
         return
 
-    def collect_entity_statistics(self, counts, etypedict):
-        # collect true positives
-        for em in self.emlist:
-            gno = etypedict[em.type]
-            counts[gno] += 1
-        return
+    def collect_ner_confusion_matrix(self, confusions, etypedict):
+        collect_ner_confusion_matrix(self, confusions, etypedict)
+
+    def collect_instance_statistics(self, counts, typedict):
+        collect_sequence_statistics(self.emlist, counts, typedict)
 
     # for NER, label schema is unknown at this time
     def generate_sentence_instances(self, tcfg):
         sl = SequenceLabel(self.id, self.no, self.text, self.emlist, self.offsets)
+        #print(self.offsets)
         return [sl]
 
 # Doc class for segmented sequence labeling

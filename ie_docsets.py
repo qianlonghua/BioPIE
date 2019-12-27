@@ -1,8 +1,8 @@
+#
 import random
-import os
-import copy
 
 from keras.utils import to_categorical
+from tensorflow import set_random_seed
 
 from re_docset import *
 from ie_models import *
@@ -10,10 +10,10 @@ from ie_models import *
 
 COUNT_LEVELS = ('inst', 'sent', 'docu')
 
-def set_random_seed(seed_value=0):
+def set_my_random_seed(seed_value=0):
     random.seed(seed_value)
     np.random.seed(seed_value)
-    #K.set_random_seed(seed_value)
+    set_random_seed(seed_value)
 
 # pad for a batch of sequences for a maximal length
 def batch_seq_padding(X, padding=0, max_len=100):
@@ -76,19 +76,29 @@ def predict_on_batch_keras(model, doc_D, verbose=0):
         X, Y = next(doc_gen)
         #print(X, Y)
         pred_p = model.predict_on_batch(X)      # probability for each class
-        pred_ps.extend(pred_p)
-        pred_c = np.argmax(pred_p, axis=-1)     # class no
+        if type(pred_p) is list:  # multi-label classification
+            pred_c = np.transpose(np.array([np.argmax(label_p, axis=-1) for label_p in pred_p]))
+            pred_ps.extend(pred_p)
+        else:
+            pred_ps.extend(pred_p)
+            pred_c = np.argmax(pred_p, axis=-1)     # class no
         pred_cs.extend(pred_c)
     return pred_cs, pred_ps
 
-def test_with_model(model, model_file, docdata, cfg):
-    # Loading
-    print('\nLoading {} ...'.format(model_file))
-    model.load_weights(model_file)
-    # Testing
-    doc_D = data_generator(docdata, cfg.max_seq_len, batch_size=cfg.batch_size, num_classes=[cfg.num_classes])
-    pred_cs, pred_ps = predict_on_batch_keras(model, doc_D=doc_D, verbose=1)
-    return pred_cs, pred_ps
+
+def create_corpus_filesets(tcfg, DocSets, task, wdir, cpsfiles, cpsfmts):
+    iesets = DocSets(task, wdir, cpsfiles, cpsfmts)
+    # specific task config: elabelschema, etypedict, elabeldict for NER
+    iesets.cfg_dict = load_json_file(os.path.join(wdir, '{}_cfg.json'.format(task)))
+    word_dict = load_word_voc_file(os.path.join(wdir, '{}_voc.txt'.format(task)))   # default for LSTM-CRF
+    #
+    if tcfg.bertID:   # for BERT model
+        word_dict, tcfg.tokenizer = load_bert_tokenizer(tcfg.bert_path)
+    else:   # non-bert model, using pre-trained word vectors
+        pretrained_filename = 'glove.6B.100d.txt'
+        word_dict, iesets.embed_matrix = load_pretrained_embedding_from_file(pretrained_filename, word_dict, EMBED_DIM=100)
+    iesets.word_dict = word_dict
+    return iesets
 
 
 class ieDocSets(object):
@@ -97,15 +107,10 @@ class ieDocSets(object):
                  wdir = None,
                  cpsfiles = None,
                  cpsfmts = None,
-                 model_name = 'Lstm',
-                 elabel_schema = 'SBIEO',
-                 bert_path = None,
-                 stask = None,
+                 stask=None,
                  cfg_dict = None,
                  word_dict=None,
-                 tokenizer = None,
                  embed_matrix = None,
-                 avgmode = 'micro',
                  ):
 
         self.task = task
@@ -114,23 +119,16 @@ class ieDocSets(object):
         self.cpsfiles = cpsfiles
         self.cpsfmts = cpsfmts
 
-        self.model_name = model_name
-        self.bert_path = bert_path
-
-        self.elabel_schema = elabel_schema
-
         self.cfg_dict = cfg_dict
         self.word_dict = word_dict
-        self.tokenizer = tokenizer
         self.embed_matrix = embed_matrix
-        self.avgmode = avgmode
+        self.model = None
 
         self.filesets = []
         self.datasets = []
 
     def __str__(self):
-        cpsinfo = '{} {} {} {}'.format(self.get_task_fullname(), self.wdir, self.cpsfiles, self.cpsfmts)
-        return '{} {} {} {}'.format(cpsinfo, self.model_name, self.bert_path, self.avgmode)
+        return '{} {} {} {}'.format(self.get_task_fullname(), self.wdir, self.cpsfiles, self.cpsfmts)
 
     # different DocSets have the same properties, but different methods
     def __copy__(self, DocSets, task=None, stask=None):
@@ -142,13 +140,9 @@ class ieDocSets(object):
         if stask:  sets.stask = stask
         return sets
 
-    def browse_corpus(self, wdir, cpsfiles, verbose=0):
-        pass
-
     def copy2docset(self, DocSet, cno):
-        # cfg_dict and word_dict are processed in get_docset_[re|ner]_dicts_features
-        docset = DocSet(task=self.task, wdir=self.wdir, id=self.cpsfiles[cno], fmt=self.cpsfmts[cno], avgmode=self.avgmode,
-                          model_name=self.model_name, elabel_schema=self.elabel_schema, tokenizer=self.tokenizer)
+        # cfg_dict and word_dict are processed in prepare_docset_dicts_features
+        docset = DocSet(task=self.task, wdir=self.wdir, id=self.cpsfiles[cno], fmt=self.cpsfmts[cno])
         return docset
 
     # get task fullname
@@ -156,49 +150,50 @@ class ieDocSets(object):
         if not self.stask: return self.task
         return '{}_{}'.format(self.stask, self.task)
 
-    def get_model_filename(self, epo, fold):
+    def get_model_filename(self, model_name, epo, fold):
         task = self.task
         if self.stask:  task = '{}_{}'.format(self.stask, task)
-        return '{}/{}_{}_e{}_f{}.hdf5'.format(self.wdir, task, self.model_name, epo, fold)
+        return '{}/{}_{}_e{}_f{}.hdf5'.format(self.wdir, task, model_name, epo, fold)
 
+    # create entity types separately
     def create_entity_type_dicts(self, level='inst'):
         for fileset in self.filesets:
             fileset.create_entity_type_dict(level)
         return
 
     # prepare NER docset with entity type, features/labels, and word vocabulary
-    def prepare_corpus_fileset(self, op, tcfg, DocSet, Doc, cno, verbose=0):
+    def prepare_corpus_fileset(self, op, tcfg, DocSet, Doc, cno):
         #
         docset = self.copy2docset(DocSet, cno)
         # generate docset
         if self.cpsfmts[cno] == 'i':  # sentence or instance-level
-            docset.prepare_docset_instance(op, tcfg, Doc, verbose=verbose)
+            docset.prepare_docset_instance(op, tcfg, Doc)
         elif self.cpsfmts[cno] in 'saf':  # abstract level, include sentence, abstract, fulltext
-            docset.prepare_docset_abstract(tcfg, Doc, verbose=verbose)
+            docset.prepare_docset_abstract(op, tcfg, Doc)
         # save or set entity type dict
-        docset.prepare_docset_dicts_features(self.cfg_dict, self.word_dict, verbose=verbose)
+        docset.prepare_docset_dicts_features(tcfg, self.cfg_dict, self.word_dict)
         return docset
 
-    def prepare_corpus_filesets(self, op, tcfg, DocSet, Doc, verbose=0):
+    def prepare_corpus_filesets(self, op, tcfg, DocSet, Doc):
         # prepare docset creation functions
         sno = 0 if ('t' in op or 'r' in op) else len(self.cpsfiles)-1
         for i in range(sno, len(self.cpsfiles)):
-            fileset = self.prepare_corpus_fileset(op, tcfg, DocSet, Doc, cno=i, verbose=verbose)
+            fileset = self.prepare_corpus_fileset(op, tcfg, DocSet, Doc, cno=i)
             self.filesets.append(fileset)
         return
 
     # prepare train/dev/test sets
     # return num of classes
-    def prepare_tdt_docsets(self, op, DocSet, valid_ratio=0, verbose=0):
+    def prepare_tdt_docsets(self, op, tcfg, DocSet):
         # prepare total data and docsets
-        total_data, total_inst, num_classes = [], [], 0
+        total_data, total_inst, num_classes = [], [], []
         self.datasets = [DocSet(task=self.task)] * 3
         #
         # the last one for test/predict, others for training
         sno = 0 if 't' in op else len(self.filesets)-1
         for i in range(sno, len(self.filesets)):
             # prepare training/dev/test data
-            doc_dat, num_classes = self.filesets[i].get_docset_data(verbose=verbose)
+            doc_dat, num_classes = self.filesets[i].get_docset_data(tcfg)
             # when the last one for validation or prediction, the whole fileset is retained
             if i == len(self.filesets)-1 and ('v' in op or 'p' in op):
                 self.datasets[2] = self.filesets[i]
@@ -209,14 +204,14 @@ class ieDocSets(object):
 
         # recombine training and validation data
         if 't' in op:  # generate training data and set
-            if valid_ratio == 0:
+            if tcfg.valid_ratio == 0:
                 # doc_data[0] = total_data
                 self.datasets[0] = self.filesets[0].__copy__()  # copy parameters except data
                 self.datasets[0].extend_instances(insts=total_inst)
                 self.datasets[0].extend_data(data=total_data)
             else:  # validation data
                 idxs = np.arange(len(total_data))
-                valid_len = int(len(total_data) * valid_ratio)
+                valid_len = int(len(total_data) * tcfg.valid_ratio)
                 np.random.shuffle(idxs)
                 # prepare doc_sets
                 for i in range(2):
@@ -229,79 +224,95 @@ class ieDocSets(object):
 
     # train and evaluate docsets
     def train_eval_docsets(self, op, tcfg, DocSet, epo=0, fold=0, folds=None):
-        bertID = ('Bert' in self.model_name)
         # cross-validation if only one file exists and operations are training/validation
         cvID = (len(self.cpsfiles) == 1 and 't' in op and 'v' in op)
         if epo == 0 or epo > tcfg.epochs:  epo = tcfg.epochs
         set_random_seed(fold)
         #
-        if bertID: tcfg.batch_size = 4    # should be 2 for CHEMD BertCrf, otherwise 4
+        if tcfg.bertID: tcfg.batch_size = 4    # should be 2 for CHEMD BertCrf, otherwise 4
 
         # split into train/dev/test docsets
         if cvID:
-            tcfg.num_classes = self.prepare_cv_tdt_docsets(tcfg.fold_num, verbose=1)
+            tcfg.num_classes = self.prepare_cv_tdt_docsets(tcfg)
         else:
-            tcfg.num_classes = self.prepare_tdt_docsets(op, DocSet, tcfg.valid_ratio, verbose=1)
+            tcfg.num_classes = self.prepare_tdt_docsets(op, tcfg, DocSet)
 
         # create models for BERT/LSTM-CRF
-        model = create_training_model(self, tcfg, verbose=1)
+        self.create_training_model(tcfg)
 
         # cross-validation
         if cvID:
-            self.cv_train_eval_model(model, cfg=tcfg, verbose=1)
+            self.cv_train_eval_model(cfg=tcfg, verbose=1)
             return
 
         # normal training
         if self.datasets[0].data:    # train
-            model_file = self.train_eval_model(model, cfg=tcfg, fold=fold)
+            model_file = self.train_eval_model(cfg=tcfg, fold=fold)
         else:     # validation of a specific model
-            model_file = self.get_model_filename(epo, fold)
+            model_file = self.get_model_filename(tcfg.model_name, epo, fold)
 
         # validation or predicting
         if not self.datasets[2].data:  return
         if folds is None or 't' in op:
-            pred_cs, pred_ps = test_with_model(model, model_file, docdata=self.datasets[2].data, cfg=tcfg)
+            pred_cs, pred_ps = self.test_with_model(tcfg, model_file, docdata=self.datasets[2].data)
         else:   # ensemble classification
-            pred_cs, pred_ps = self.ensemble_classify(model, docset=self.datasets[2], cfg=tcfg, epo=epo, folds=folds)
-        self.datasets[2].evaluate_docset_model(op, pred_classes=pred_cs, mdlfile=model_file, verbose=3)
+            pred_cs, pred_ps = self.ensemble_classify(tcfg, docset=self.datasets[2], epo=epo, folds=folds)
+        self.datasets[2].evaluate_docset_model(op, tcfg, pred_classes=pred_cs, mdlfile=model_file)
+        return
+
+    def create_training_model(self, tcfg):
+        if tcfg.bertID:
+            bert_model = load_bert_model(tcfg.bert_path, tcfg.verbose)
+            self.model = create_bert_classification_model('token', bert_model, tcfg.num_classes)
+        else:
+            model_cfg = NerCrfConfig(model_name=tcfg.model_name, vocab_size=len(self.word_dict), tag_size=tcfg.num_classes[0],
+                                     max_seq_len=tcfg.max_seq_len, embedding_dim=100, lstm_hidden_dim=100,
+                                     lstm_output_dim=50)
+            self.model = build_lstm_crf_model(cfg=model_cfg, EMBED_MATRIX=self.embed_matrix)
+        if tcfg.verbose:  self.model.summary()
         return
 
     # train the model using datasets[0].data, evaluate on the datasets[1,2].data
-    def train_eval_model(self, model, cfg, fold):
+    def train_eval_model(self, cfg, fold):
         model_file, vprfs, tprfs = None, [], []
         for i in range(cfg.epochs):
             print('\nTraining epoch {}/{}'.format(i + 1, cfg.epochs))
-            model_file = self.get_model_filename(epo=i+1, fold=fold)
+            model_file = self.get_model_filename(cfg.model_name, epo=i+1, fold=fold)
             # training
-            doc_D = data_generator(self.datasets[0].data, cfg.max_seq_len, cfg.batch_size, num_classes=[cfg.num_classes])
-            model.fit_generator(doc_D.__iter__(shuffleID=True), steps_per_epoch=len(doc_D), epochs=1, verbose=True)
-            model.save_weights(model_file)
+            doc_D = data_generator(self.datasets[0].data, cfg.max_seq_len, cfg.batch_size, num_classes=cfg.num_classes)
+            self.model.fit_generator(doc_D.__iter__(shuffleID=True), steps_per_epoch=len(doc_D), epochs=1, verbose=True)
+            self.model.save_weights(model_file)
             # evaluate on validation/test
             for j in range(1, 3):
                 if not self.datasets[j].data:  continue
-                doc_D = data_generator(self.datasets[j].data, cfg.max_seq_len, cfg.batch_size, num_classes=[cfg.num_classes])
-                # loss, acc = model.evaluate_generator(doc_D.__iter__(), steps=len(doc_D))
-                # print('{:>6} loss: {:6.4f}, accuracy: {:6.4f}'.format('valid' if j==1 else 'test', loss, acc))
-                pred_cs, _ = predict_on_batch_keras(model, doc_D=doc_D, verbose=0)
-                set_name = self.datasets[j].id if j == 2 else 'valid'
-                self.datasets[j].assign_docset_predicted_results(pred_nos=pred_cs)
-                aprf = self.datasets[j].calculate_docset_f1(level='inst', mdlfile=model_file, verbose=0)
-                if j == 1:
-                    vprfs.append(aprf)  # validation
-                else:
-                    tprfs.append(aprf)  # test
-        # aprfs = np.array(aprfs)
+                doc_D = data_generator(self.datasets[j].data, cfg.max_seq_len, cfg.batch_size, num_classes=cfg.num_classes)
+                pred_cs, _ = predict_on_batch_keras(self.model, doc_D=doc_D, verbose=0)
+                self.datasets[j].assign_docset_predicted_results(pred_nos=pred_cs, bertID=cfg.bertID)
+                aprf = self.datasets[j].calculate_docset_performance(level='inst', mdlfile=model_file, avgmode=cfg.avgmode, verbose=0)
+                if j == 1:  vprfs.append(aprf)  # validation
+                else:  tprfs.append(aprf)     # test
+        # validation/test
         print()
-        for prf in vprfs:  print(format_row_prf(prf))
-        print()
-        for prf in tprfs:  print(format_row_prf(prf))
+        for i in range(1,3):
+            if not self.datasets[i].data:  continue
+            for j, prf in enumerate(vprfs if i == 1 else tprfs):
+                print('{:>6}(ep={}): {}'.format('valid' if i == 1 else 'test', j+1, format_row_prf(prf)))
         return model_file
 
-    def ensemble_classify(self, model, docset, cfg, epo, folds):
+    def test_with_model(self, tcfg, model_file, docdata):
+        # Loading
+        print('\nLoading {} ...'.format(model_file))
+        self.model.load_weights(model_file)
+        # Testing
+        doc_D = data_generator(docdata, tcfg.max_seq_len, batch_size=tcfg.batch_size, num_classes=tcfg.num_classes)
+        pred_cs, pred_ps = predict_on_batch_keras(self.model, doc_D=doc_D, verbose=1)
+        return pred_cs, pred_ps
+
+    def ensemble_classify(self, tcfg, docset, epo, folds):
         pred_pt = None
         for foldno in folds:
-            model_file = self.get_model_filename(epo, foldno)
-            pred_cs, pred_ps = test_with_model(model, model_file, docdata=docset.data, cfg=cfg)
+            model_file = self.get_model_filename(tcfg.model_name, epo, foldno)
+            pred_cs, pred_ps = self.test_with_model(tcfg, model_file, docdata=docset.data)
             if pred_pt is None:
                 pred_pt = np.array(pred_ps)
             else:
@@ -312,12 +323,12 @@ class ieDocSets(object):
 
     # cross-validation
     # op=='tv', len(doc_files)==1
-    def prepare_cv_tdt_docsets(self, fold_num=5, verbose=0):
+    def prepare_cv_tdt_docsets(self, tcfg):
         # generate_document_sentences
         # fold_no = FOLD_NUM
-        self.datasets = [ieDocSet(task=self.task)] * fold_num
+        self.datasets = [ieDocSet(task=self.task)] * tcfg.fold_num
         # prepare docset
-        doc_dat, num_classes = self.filesets[0].get_docset_data(verbose=verbose)
+        doc_dat, num_classes = self.filesets[0].get_docset_data(tcfg)
         doc_inst = self.filesets[0].insts
         # reshuffle data and instances
         idxs = np.arange(len(doc_inst))
@@ -325,8 +336,8 @@ class ieDocSets(object):
         doc_inst = [doc_inst[i] for i in idxs]
         doc_dat = [doc_dat[i] for i in idxs]
         # divide
-        fold_len = int(len(doc_inst) / fold_num)
-        for i in range(fold_num):
+        fold_len = int(len(doc_inst) / tcfg.fold_num)
+        for i in range(tcfg.fold_num):
             # the ith training/test data
             self.datasets[i] = self.filesets[0].__copy__()
             self.datasets[i].data.append(doc_dat[:i * fold_len] + doc_dat[(i + 1) * fold_len:])  # 0: training
@@ -337,55 +348,62 @@ class ieDocSets(object):
         return num_classes
 
     # train and validate with cross-validation
-    def cv_train_eval_model(self, model, cfg, verbose=0):
+    def cv_train_eval_model(self, cfg, verbose=0):
         #
         epochs, fold_num = cfg.epochs, cfg.fold_num
-        old_weights = model.get_weights()
+        old_weights = self.model.get_weights()
         lfilename = '{}/{}_{}.log'.format(self.wdir, self.datasets[0].id, self.task)
         #
         aprfs = np.zeros([fold_num+2, 6], dtype=float)
         fold_num_valid = fold_num if cfg.fold_num_run == 0 else cfg.fold_num_run
         for i in range(fold_num_valid):
-            model.set_weights(old_weights)
+            self.model.set_weights(old_weights)
             for j in range(epochs):
                 #model_file = '{}/{}_{}_e{}_f{}.hdf5'.format(wdir, task, model_name, j + 1, i + 1)
-                model_file = self.get_model_filename(epo=j+1, fold=i+1)
+                model_file = self.get_model_filename(cfg.model_name, epo=j+1, fold=i+1)
                 rfilename = '{}/{}_{}_e{}_f{}.rst'.format(self.wdir, self.datasets[0].id, self.task, j+1, i+1)
                 #
                 if verbose:
                     print('\nTraining epoch {}/{} for fold {}/{} ...'.format(j + 1, epochs, i + 1, fold_num))
                 doc_D = data_generator(self.datasets[i].data[0], cfg.max_seq_len, cfg.batch_size,
-                                       num_classes=[cfg.num_classes])
-                model.fit_generator(doc_D.__iter__(shuffleID=True), steps_per_epoch=len(doc_D), epochs=1, verbose=True)
-                model.save_weights(model_file)
+                                       num_classes=cfg.num_classes)
+                self.model.fit_generator(doc_D.__iter__(shuffleID=True), steps_per_epoch=len(doc_D), epochs=1, verbose=True)
+                self.model.save_weights(model_file)
                 # evaluate on test
                 doc_D = data_generator(self.datasets[i].data[2], cfg.max_seq_len, cfg.batch_size,
-                                       num_classes=[cfg.num_classes])
-                pred_cs, _ = predict_on_batch_keras(model, doc_D=doc_D, verbose=1)
-                self.datasets[i].assign_docset_predicted_results(pred_nos=pred_cs)
-                aprf = self.datasets[i].calculate_docset_f1(level='inst', mdlfile=model_file, logfile=lfilename,
-                                                            rstfile=rfilename, verbose=3)
+                                       num_classes=cfg.num_classes)
+                pred_cs, _ = predict_on_batch_keras(self.model, doc_D=doc_D, verbose=1)
+                self.datasets[i].assign_docset_predicted_results(pred_nos=pred_cs, bertID=cfg.bertID)
+                aprf = self.datasets[i].calculate_docset_performance(level='inst', mdlfile=model_file, logfile=lfilename,
+                                                                     rstfile=rfilename, avgmode=cfg.avgmode, verbose=0)
                 aprfs[i] = aprf
         # calculate average and standard deviations
         aprfs[-2, :] = np.average(aprfs[:-2, :], axis=0)
         aprfs[-1, :] = np.std(aprfs[:-2, :], axis=0)
-        # output average performance
-        flog = open(lfilename, 'a', encoding='utf8')
-        print('\nAverage PRF performance across {} folders:'.format(fold_num), file=flog)
+        # calculate average performance
         tdict = {str(i): i for i in range(fold_num)}
         tdict.update({'Avg.': fold_num, 'Std.': fold_num + 1})
-        output_classification_prfs(aprfs, tdict, flog=flog, verbose=1)
+        olines = ['\nAverage PRF performance across {} folders:'.format(fold_num)]
+        olines.extend(output_classification_prfs(aprfs, tdict, verbose=1))
+        # output the performance
+        flog = open(lfilename, 'a', encoding='utf8')
+        print('\n'.join(olines), file=flog)
         flog.close()
         return
 
-    def calculate_docsets_entity_statistics(self, levels=COUNT_LEVELS):
+    def calculate_docsets_instance_statistics(self, levels=COUNT_LEVELS):
         ccounts = []
         for fileset in self.filesets:
             lcounts = []
             for level in levels:  # exclude the level -- 'inst'
-                lcounts.append(fileset.generate_docset_entity_statistics(level))
+                lcounts.append(fileset.generate_docset_instance_statistics(level))
                 if fileset.fmt == 'i':  break  # 'saf': sent-level/docu-level for sentence, abstract, full-text
             ccounts.append(lcounts)
+        return ccounts
+
+    # only calculate statistics on entity mentions at sen- and docu- levels
+    def calculate_docsets_entity_mention_statistics(self, levels=COUNT_LEVELS):
+        ccounts = [[fileset.generate_docset_entity_mention_statistics(level) for level in levels] for fileset in self.filesets]
         return ccounts
 
     # output relation statistics from one aspect: 'level' or 'file'
@@ -414,75 +432,37 @@ class ieDocSets(object):
         return
 
     # counts: [[d1[l1], [l2]], [d2[l1], [l2], ...], ...]
-    def output_docsets_entity_statistics(self, ccounts, levels=COUNT_LEVELS, logfile=None):
-        wdir, etypedict = self.wdir, self.filesets[0].etypedict
+    def output_docsets_instance_statistics(self, ccounts, instname, levels=COUNT_LEVELS, logfile=None, typedict=None):
+        # default type dict
+        if not typedict:  typedict = self.filesets[0].get_type_dict()
+        #
         flog = sys.stdout
-        if logfile:  flog = open(os.path.join(wdir, logfile), 'a', encoding='utf8')
-        # 3*2*14
+        if logfile:  flog = open(os.path.join(self.wdir, logfile), 'a', encoding='utf8')
+        # convert to numpy array like 3*2*14
         ccounts = np.array(ccounts)  # num of files, num of levels, num of types
         # aspect with different levels, total on files
         if ccounts.shape[0] > 1 or ccounts.shape[1] == 1:  # multiple files or only one level
-            self.output_aspect_statistics('level', 'entities', etypedict, levels, ccounts, flog)
+            self.output_aspect_statistics('level', instname, typedict, levels, ccounts, flog)
         # aspect with different files
         if ccounts.shape[1] > 1:  # multiple levels
-            self.output_aspect_statistics('file', 'entities', etypedict, levels, ccounts, flog)
+            self.output_aspect_statistics('file', instname, typedict, levels, ccounts, flog)
         if logfile:  flog.close()
         return
 
 
 # DocSets class for RE
 class reDocSets(ieDocSets):
+    # create relation types separately
     def create_relation_type_dicts(self):
         for fileset in self.filesets:
-            fileset.create_reverse_relation_type_dict()
-            fileset.create_non_reverse_relation_type_dict()
+            fileset.create_relation_type_dict()
         return
     #
-    def calculate_docsets_relation_statistics(self, levels=COUNT_LEVELS):
-        crcounts, ccounts = [], []
-        for fileset in self.filesets:
-            lrcounts, lcounts = [], []
-            for level in levels:
-                rcounts, counts = fileset.generate_docset_relation_statistics(level=level)
-                batch_list_append(lrcounts, rcounts, lcounts, counts)
-                if fileset.fmt == 'i':  break  # 'saf': sent-level/docu-level for sentence, abstract, full-text
-            batch_list_append(crcounts, lrcounts, ccounts, lcounts)
-        return crcounts, ccounts
-
-    # counts: [[d1[l1], [l2]], [d2[l1], [l2], ...], ...]
-    def output_docsets_relation_statistics(self, crcounts, ccounts, levels=COUNT_LEVELS, logfile=None):
-        rrtypedict, rtypedict, rvsID = self.filesets[0].rrtypedict, self.filesets[0].rtypedict, self.filesets[0].rvsID
-        flog = sys.stdout
-        if logfile:  flog = open(os.path.join(self.wdir, logfile), 'a', encoding='utf8')
-        #
-        crcounts = np.array(crcounts)  # num of files, num of levels, num of types
-        ccounts = np.array(ccounts)  # 3*2*14
-        # aspect with different levels, total on files
-        if crcounts.shape[0] > 1 or crcounts.shape[1] == 1:  # multiple files or only one level
-            self.output_aspect_statistics('level', 'reverse relations', rrtypedict, levels, crcounts, flog)
-            if rvsID:
-                self.output_aspect_statistics('level', 'non-reverse relations', rtypedict, levels, ccounts, flog)
-        # aspect with different files
-        if crcounts.shape[1] > 1:  # multiple levels
-            self.output_aspect_statistics('file', 'reverse relations', rrtypedict, levels, crcounts, flog)
-            if rvsID:
-                self.output_aspect_statistics('file', 'non-reverse relations', rtypedict, levels, ccounts, flog)
-        if logfile:  flog.close()
+    def create_training_model(self, tcfg):
+        if tcfg.bertID:
+            bert_model = load_bert_model(tcfg.bert_path, tcfg.verbose)
+            self.model = create_bert_classification_model('sent', bert_model, tcfg.num_classes)
+        if tcfg.verbose:  self.model.summary()
         return
 
-
-def create_corpus_filesets(DocSets, task, wdir, cpsfiles, cpsfmts, model_name,
-                           bert_path=None, avgmode='micro'):
-    iesets = DocSets(task, wdir, cpsfiles, cpsfmts, model_name, bert_path=bert_path, avgmode=avgmode)
-    # specific task config: elabelschema, etypedict, elabeldict for NER
-    iesets.cfg_dict = load_json_file(os.path.join(wdir, '{}_cfg.json'.format(task)))
-    word_dict = load_word_voc_file(os.path.join(wdir, '{}_voc.txt'.format(task)))   # default for LSTM-CRF
-    #
-    if 'Bert' in model_name:   # for BERT model
-        word_dict, iesets.tokenizer = load_bert_tokenizer(bert_path)
-    else:   # non-bert model, using pre-trained word vectors
-        pretrained_filename = 'glove.6B.100d.txt'
-        word_dict, iesets.embed_matrix = load_pretrained_embedding_from_file(pretrained_filename, word_dict, EMBED_DIM=100)
-    iesets.word_dict = word_dict
-    return iesets
 

@@ -478,6 +478,15 @@ def convert_jnlpba_corpus(wdir, cps_file, verbose=0):
     file_list2line(dlines, dfilename, verbose=verbose)
     return
 
+# convert space separator to tab separator
+def convert_conll2003_corpus(wdir, cps_file, verbose=0):
+    sfilename = '{}/{}.org'.format(wdir, cps_file)
+    dfilename = '{}/{}.iob'.format(wdir, cps_file)
+    slines = file_line2array(sfilename, sepch=' ', verbose=verbose)
+    dlines = ['\t'.join(sline) for sline in slines]
+    file_list2line(dlines, dfilename, verbose=verbose)
+    return
+
 def convert_bio_corpus(wdir, cpsfiles, verbose=0):
     if wdir == 'NCBI':
         for cf in cpsfiles:  convert_ncbi_corpus(wdir, cf, verbose=verbose)
@@ -503,5 +512,7 @@ def convert_bio_corpus(wdir, cpsfiles, verbose=0):
         for cf in cpsfiles:  convert_asq_corpus(wdir, cf, verbose=verbose)
     elif wdir == 'JNLPBA':
         for cf in cpsfiles:  convert_jnlpba_corpus(wdir, cf, verbose=verbose)
+    elif wdir == 'CONLL2003':
+        for cf in cpsfiles:  convert_conll2003_corpus(wdir, cf, verbose=verbose)
     return
 

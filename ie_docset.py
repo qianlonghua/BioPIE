@@ -2,7 +2,6 @@
 processing document set
 """
 import numpy as np
-import json
 from datetime import datetime
 from tqdm import tqdm
 
@@ -12,24 +11,7 @@ from ie_doc import *
 def npdiv0(a, b):
     return np.divide(a, b, out=np.zeros_like(a), where=b!=0)
 
-def collect_ner_confusion_matrix(inst, confusions, etypedict):
-    # collect true/false positives
-    for em in inst.emlist:
-        gno = etypedict[em.type]
-        pno = -1    # Entity --> O
-        if em.gpno >= 0:    # matched
-            pno = etypedict[inst.remlist[em.gpno].type]
-        confusions[gno][pno] += 1
-    # collect false positives
-    for rem in inst.remlist:
-        if rem.gpno < 0 and rem.hsno >= 0 and rem.heno >= 0:  # O --> valid BERT entity
-            pno = etypedict[rem.type]
-            confusions[-1][pno] += 1
-            if rem.hsno < 0 or rem.heno < 0:    # for Bert fragments
-                print(rem)
-    return
-
-def output_confusion_matrix(cm, ldict, file):
+def output_confusion_matrix(cm, ldict):
     rows = [k for k, v in sorted(ldict.items(), key=lambda x: x[1])]
     crange = range(len(cm[0]))
     rows = [rows[c] for c in crange]
@@ -38,24 +20,25 @@ def output_confusion_matrix(cm, ldict, file):
     cols.extend([[k, 4, 0] for k in rows])
     #
     lines = output_matrix(cm, cols, rows)
-    print('\n'.join(lines), file=file)
-    return
+    #print('\n'.join(lines), file=file)
+    return lines
 
 #      0    1    2 None
 #  [1662   29    5  139]    0
 #  [   8 1107   13  210]    1
 #  [  14    4 1702  121]    2
 #  [  94  208   85    0] None
-def sum_ner_confusion_matrix_to_prfs(confusions, prfs):
-    prfs[:-1, 0] = confusions[:-1].sum(axis=-1)  # gold
-    prfs[:-1, 1] = confusions[:, :-1].sum(axis=0)  # predicted
+# noneID: whether label 'None' exists in the confusion matrix, which is True for NER
+def sum_confusion_matrix_to_prfs(confusions, prfs, noneID=False):
+    end = confusions.shape[0] - 1 if noneID else confusions.shape[0]
+    prfs[:-1, 0] = confusions[range(end)].sum(axis=-1)  # gold
+    prfs[:-1, 1] = confusions[:, range(end)].sum(axis=0)  # predicted
     for i in range(len(prfs) - 1):  prfs[i, 2] = confusions[i, i]
 
 # 1..
 # ...
-# None
 # Avg.
-def calculate_classification_prfs(prfs, noneID=True, avgmode='micro'):
+def calculate_classification_prfs(prfs, noneID=False, avgmode='micro'):
     aidx = -2 if noneID else -1 # idx for average, None is always at the bottom
     prfs[-1,:3] = np.sum(prfs[:aidx,:3], axis=0)
     prfs[:,3] = npdiv0(prfs[:,2], prfs[:,1]) * 100
@@ -69,12 +52,12 @@ def format_row_prf(prf):
     sprf = '{:6.0f}\t{:6.0f}\t{:6.0f}\t{:6.2f}\t{:6.2f}\t{:6.2f}'.format(prf[0], prf[1], prf[2], prf[3], prf[4], prf[5])
     return sprf
 
-def output_classification_prfs(prfs, rtypedict, flog=sys.stdout, verbose=0):
+def output_classification_prfs(prfs, rtypedict, verbose=0):
     cols = (('TYPE', 6, 0), ('GOLD', 6, 0), ('TP+FP', 6, 0), ('TP', 6, 0), ('P', 6, 2), ('R', 6, 2), ('F1', 6, 2))
     rows = [key for key, idx in sorted(rtypedict.items(), key=lambda x: x[1])]
     lines = output_matrix(prfs, cols, rows)
-    print('\n'.join(lines) if verbose >=1 else lines[-1], file=flog)
-    return
+    #print('\n'.join(lines) if verbose >= 1 else lines[-1], file=flog)
+    return lines if verbose >= 1 else [lines[-1]]
 
 # cols=[['TYPE', 6, 0],...], rows=['0',...'Avg.']
 # output matrix like:
@@ -116,9 +99,6 @@ def make_matrix_cell_format(col, titleID=False):
 def get_ner_instance(flines):
     i = 0   # line no
     while i < len(flines):
-        #print(flines[i])
-        # if flines[i][0] != '' and (wdir == 'CONLL2003' and flines[i][0] != '-DOCSTART-' or
-        #                            wdir == 'JNLPBA2004' and not flines[i][0].startswith('###')):
         if flines[i][0] != '':
             eos = False
             for j in range(i+1, len(flines)):
@@ -134,6 +114,7 @@ def get_ner_instance(flines):
             i += 1
     yield None
 
+
 # document set for NER
 class ieDocSet(object):
     def __init__(self,
@@ -142,32 +123,24 @@ class ieDocSet(object):
                  wdir = None,
                  id = None,
                  fmt = 'i',
-                 model_name = 'Lstm',
-                 avgmode='micro',
-                 elabel_schema = 'SBIEO',    # entity
-                 tokenizer = None
+                 elabel_schema = 'SBIEO'  # elabel_schema can be set by tcfg, but loaded from cfg file
                  ):
         self.task = task    # standard NLP task, such as re, ure, ner
         self.stask = stask  # source NLP task to be cast as task
         self.fmt = fmt      # i-instance, s-sentence, a-title/abstract, f-full-text
         self.id = id        # train/dev/text
         self.wdir = wdir    # GE09/test
-        self.model_name = model_name
-        self.avgmode = avgmode
-        self.bertID = ('Bert' in model_name)
 
         # the following fields can't be copied
         self.docdict = {}    # doc dict from pmid to document
-        self.insts = []      # instances
-        self.data = []       # learning data
+        self.insts = []      # string-type instances
+        self.data = []       # interger-type data
 
-        # entity
+        # entity and word dicts
         self.elabel_schema = elabel_schema
         self.etypedict = {}
         self.elabeldict = {}
-
         self.worddict = {}
-        self.tokenizer = tokenizer
 
     def __str__(self):
         docs = [doc[1].__str__() for doc in sorted(self.docdict.items(), key=lambda d:d[0])]
@@ -204,10 +177,8 @@ class ieDocSet(object):
     def contains_doc(self, did):
         if did in self.docdict:
             return self.docdict[did]
+        print('DocPmidErr: {}'.format(did))
         return None
-
-    def get_label_type_dict(self):  # num of classes for NER
-        return self.elabeldict
 
     def load_docset_bio_sentence(self, Doc, tfilename, verbose=0):
         tlines = file_line2array(tfilename, verbose=verbose)
@@ -258,11 +229,10 @@ class ieDocSet(object):
             if len(types) == 1:  types = [type, None]
             if len(links) == 1:  links = [None, link]
             # generate entity mention
-            em = EntityMention(id=eid, type=types[0][:4], stype=types[1], name=name,
+            em = EntityMention(did=pmid, id=eid, type=types[0][:4], stype=types[1], name=name,
                                linkdb=links[0], linkid=links[1], hsno=int(spos), heno=int(epos))
             doc = self.contains_doc(pmid)
             if doc: doc.append_entity_mention(em)
-            else: print('DocPmidCon: {}'.format(em))
         return True
 
     # check location consistency between entity annotation and text
@@ -280,13 +250,13 @@ class ieDocSet(object):
         for _, doc in self.docdict.items():
             doc.preprocess_document_entity_mentions(tcfg)
 
-    def generate_docset_sentences(self, tcfg, Doc, verbose=0):
+    def generate_docset_sentences(self, tcfg, Doc):
         dictdocs = self.docdict.items()
-        if verbose:
+        if tcfg.verbose:
             print('\nGenerating {} sentences from documents ...'.format(self.get_task_fullname()))
             dictdocs = tqdm(dictdocs)
         for _, doc in dictdocs:
-            doc.generate_document_sentences(tcfg, Doc, self.task, self.fmt, verbose=verbose)
+            doc.generate_document_sentences(tcfg, Doc, self.task, self.fmt)
             #print(doc)
 
     def collect_docset_instances(self, tcfg):
@@ -297,46 +267,46 @@ class ieDocSet(object):
 
     # prepare NER docset for training or prediction
     # must be overwritten due to ieDoc
-    def prepare_docset_abstract(self, tcfg, Doc, verbose=0):
-        self.load_docset_bio_text(Doc, verbose=verbose)
-        efilename = '{}/{}.ent'.format(self.wdir, self.id)
-        self.load_docset_entity_mentions(efilename, verbose=verbose)
-        self.check_docset_entity_mentions(verbose=verbose)
-        self.generate_docset_sentences(tcfg, Doc, verbose=verbose)  # no entity, relations, events
+    def prepare_docset_abstract(self, op, tcfg, Doc):
+        self.load_docset_bio_text(Doc, verbose=tcfg.verbose)
+        if op != 'p':   # not only prediction
+            efilename = '{}/{}.ent'.format(self.wdir, self.id)
+            self.load_docset_entity_mentions(efilename, verbose=tcfg.verbose)
+            self.check_docset_entity_mentions(verbose=tcfg.verbose)
+        self.generate_docset_sentences(tcfg, Doc)  # no entity, relations, events
         self.collect_docset_instances(tcfg)
         return
 
     # preparing NER docset from sentence-style file *.iob like CONLL2003, JNLPBA-2004
     # convert spaces to tabs in CoNLL2003
-    def prepare_docset_instance(self, op, tcfg, Doc, verbose=0):
+    def prepare_docset_instance(self, op, tcfg, Doc):
         ffilename = '{}/{}.iob'.format(self.wdir, self.id)  # feature file
-        self.load_docset_instance(op, Doc, ffilename, verbose=verbose)
+        self.load_docset_instance(op, Doc, ffilename, verbose=tcfg.verbose)
         self.collect_docset_instances(tcfg)
         return
 
     def load_docset_instance(self, op, Doc, ffilename, verbose=0):
-        sepch = ' ' if self.wdir == 'CONLL2003' else '\t'  # for JNLPBA2004
-        flines = file_line2array(ffilename, sepch=sepch, verbose=verbose)
+        flines = file_line2array(ffilename, verbose=verbose)
         # make vocabularies
         sent_get = get_ner_instance(flines)
         feats = next(sent_get)
+        # a virtual document for all sentences
+        doc = Doc(id=self.id)
+        self.append_doc(self.id, doc)
         sent_no = 0
         while feats:
             # print_list(feats)
             text = ' '.join([feat[0] for feat in feats])
-            # add a doc to the docset and a sentence to the doc
-            did = '{}-{}'.format(self.id, sent_no)
-            doc = Doc(id=did, text=text)
-            snt = Doc(id=self.id, no=0, text=text)
+            # add a sentence to the doc
+            snt = Doc(id=self.id, no=sent_no, text=text)
             if 'r' in op or 't' in op or 'v' in op:  # train/test
                 labels = [feat[-1] for feat in feats]
                 # recover entity mentions
                 ems = get_entity_mentions_from_labels(labels)
                 for eno, spos, epos, type in ems:
-                    snt.add_entity_mention_to_sentence(sent_no, feats, eno, spos, epos, type)
+                    snt.add_entity_mention_to_sentence(self.id, sent_no, feats, eno, spos, epos, type)
             # print(feats)
             doc.sntlist.append(snt)
-            self.append_doc(did, doc)
             # print(snt)
             feats = next(sent_get)
             sent_no += 1
@@ -350,7 +320,7 @@ class ieDocSet(object):
     # collect label types from instances, sentences, or docs
     def create_entity_type_dict(self, level='inst'):
         # collect
-        typedict = {}
+        typedict, self.etypedict = {}, {}
         if level == 'docu':
             for _, doc in self.docdict.items():
                 self.update_entity_type_dict(typedict, doc.emlist)
@@ -362,15 +332,14 @@ class ieDocSet(object):
             for inst in self.insts:  # inst is SequenceLabel
                 self.update_entity_type_dict(typedict, inst.emlist)
         # sort
-        for i, key in enumerate(sorted(typedict)):    typedict[key] = i
-        typedict['Avg.'] = len(typedict)
-        self.etypedict = typedict
+        for i, key in enumerate(sorted(typedict)):    self.etypedict[key] = i
+        self.etypedict['Avg.'] = len(self.etypedict)
         return
 
     # create label dict from entity types
-    def create_entity_label_dict(self):
+    def create_entity_label_dict(self, label_schema):
+        self.elabel_schema = label_schema
         self.elabeldict = {'PAD':0, 'O':1}
-        label_schema = self.elabel_schema
         for type in sorted(self.etypedict):
             if type != 'Avg.':
                 labeldict = {'{}-{}'.format(label, type):len(self.elabeldict)+i for i, label in enumerate(label_schema[:-1])}
@@ -378,35 +347,38 @@ class ieDocSet(object):
         return
 
     # create type dict from entity mentions
-    def create_label_type_dict(self, filename=None, verbose=0):
+    def create_type_label_dict(self, tcfg, filename=None):
         # entity type dict
         self.create_entity_type_dict()
-        self.create_entity_label_dict()
+        self.create_entity_label_dict(label_schema=tcfg.elabel_schema)
         # save to config file
         if filename is not None:
-            if verbose:  print('Saving config to {}'.format(filename))
+            if tcfg.verbose:  print('Saving config to {}'.format(filename))
             with open(filename, 'w') as outfile:
                 cfg_dict ={'eschema':self.elabel_schema, 'etype':self.etypedict, 'elabel':self.elabeldict}
                 json.dump(cfg_dict, outfile, indent=2, sort_keys=False)
         return
 
-    def set_label_type_dict(self, tdict):
+    def set_type_label_dict(self, tdict):
         # entity
         self.elabel_schema = tdict['eschema']
         self.etypedict = tdict['etype']
         self.elabeldict = tdict['elabel']
         return
 
-    def set_word_vocab_dict(self, wdict):
-        self.worddict = wdict
+    def get_type_dict(self):  return self.etypedict
 
-    def generate_docset_instance_features(self, verbose=0):
+    def get_label_dict(self):  return self.elabeldict
+
+    def set_word_vocab_dict(self, wdict):  self.worddict = wdict
+
+    def generate_docset_instance_features(self, tcfg):
         insts = self.insts
-        if verbose:
-            print('Generating {} {} features'.format(self.get_task_fullname(), self.model_name))
+        if tcfg.verbose:
+            print('Generating {} {} features'.format(self.get_task_fullname(), tcfg.model_name))
             insts = tqdm(insts)
         for inst in insts:
-            inst.generate_instance_features(self.bertID, self.tokenizer, schema=self.elabel_schema)
+            inst.generate_instance_features(tcfg, self)
         return
 
     def create_docset_word_vocab(self, filename=None, verbose=0):
@@ -426,22 +398,22 @@ class ieDocSet(object):
     def set_docset_word_vocab(self, word_dict=None):
         if word_dict is not None: self.worddict = word_dict
 
-    def prepare_docset_dicts_features(self, cfg_dict=None, word_dict=None, verbose=0):
+    def prepare_docset_dicts_features(self, tcfg, cfg_dict=None, word_dict=None):
         task, wdir, cps_file = self.get_task_fullname(), self.wdir, self.id
         if cfg_dict is None:
             cfilename = '{}/{}_{}_cfg.json'.format(wdir, task, cps_file)  # save config file
             if os.path.exists(cfilename):  cfg_dict=load_json_file(cfilename)
             else:
-                self.create_label_type_dict(filename=cfilename, verbose=verbose)
+                self.create_type_label_dict(tcfg, filename=cfilename)
         # set label type dict
         if cfg_dict:
-            self.set_label_type_dict(tdict=cfg_dict)
+            self.set_type_label_dict(tdict=cfg_dict)
         # generate docset re features
-        self.generate_docset_instance_features(verbose=verbose)
+        self.generate_docset_instance_features(tcfg)
         # save or set word vocabulary
         if word_dict is None:
             vfilename = '{}/{}_{}_voc.txt'.format(wdir, task, cps_file)  # word vocab file
-            self.create_docset_word_vocab(filename=vfilename, verbose=verbose)
+            self.create_docset_word_vocab(filename=vfilename, verbose=tcfg.verbose)
         else:
             self.set_docset_word_vocab(word_dict=word_dict)  # share word dict across RE & NER
         return
@@ -451,43 +423,51 @@ class ieDocSet(object):
         return self.worddict[word]
 
     # # return sequence data for NER
-    def get_docset_data(self, verbose=0):
+    def get_docset_data(self, tcfg):
         # get the examples
         insts, exams = self.insts, []
-        if verbose > 0:
+        if tcfg.verbose > 0:
             print('Generating {} candidates ...'.format(self.get_task_fullname()))
             insts = tqdm(insts)
         for inst in insts:
-            exams.append(inst.output_instance_candidate(bertID=self.bertID))
+            exams.append(inst.output_instance_candidate(bertID=tcfg.bertID))
         #
-        doc_data, num_classes = self.output_docset_instance_candidates(exams, verbose=verbose)
-        return doc_data, num_classes
-
-    # output ner candidates for a docset
-    def output_docset_instance_candidates(self, exams, verbose=0):
-        # get the label dictionary
-        labeldict = self.get_label_type_dict()
-        num_classes = len(labeldict)
-        # get integer-type data
-        data = [[[[self.get_word_idx(word) for word in words], [0]*len(words), [len(words)]],
-                [[labeldict[label] for label in labels]]] for words, labels in exams]
+        data, num_classes, labeldict, exno = self.output_docset_instance_candidates(exams, verbose=tcfg.verbose)
         # display an example
-        if verbose:
-            for i, inst in enumerate(self.insts):
-                if len(inst.emlist) > 1:  # at least two entity mentions
-                    print(inst)
-                    print()
-                    for j, exam in enumerate(exams[i]):  print('I{}:'.format(j), exam)
-                    for j, feature in enumerate(data[i][0]):  print('F{}:'.format(j), feature)
-                    for j, label in enumerate(data[i][1]): print('L{}:'.format(j), label)
-                    break
+        if tcfg.verbose:
+            print('\n{}\n'.format(self.insts[exno]))
+            for j, exam in enumerate(exams[exno]):  print('I{}:'.format(j), exam)
+            for j, feature in enumerate(data[exno][0]):  print('F{}:'.format(j), feature)
+            for j, label in enumerate(data[exno][1]): print('L{}:'.format(j), label)
             # display the label dictionary
             print('\n{:,} {} instances with {} classes'.format(len(data), self.id, num_classes))
             print(sorted(labeldict.items(), key=lambda d: d[1]))
         return data, num_classes
 
+    # output ner candidates for a docset
+    def output_docset_instance_candidates(self, exams, verbose=0):
+        """
+        :param exams:
+        :param verbose:
+        :return:
+        """
+        # get the label dictionary
+        labeldict = self.get_label_dict()
+        num_classes = [len(labeldict)]
+        # get integer-type data
+        data = [[[[self.get_word_idx(word) for word in words], [0]*len(words), [len(words)]],
+                [[labeldict[label] for label in labels]]] for words, labels in exams]
+        # display an example
+        exno = 0
+        if verbose:
+            for i, inst in enumerate(self.insts):
+                if len(inst.emlist) > 1:  # at least two entity mentions
+                    exno = i
+                    break
+        return data, num_classes, labeldict, exno
+
     # assign predicted to the instances
-    def assign_docset_predicted_results(self, pred_nos):
+    def assign_docset_predicted_results(self, pred_nos, bertID=False):
         # create dict of idx to tag
         idx2tag = {i:tag for tag, i in self.elabeldict.items()}
         pred_labels = [[idx2tag[i] for i in row] for row in pred_nos]
@@ -497,19 +477,19 @@ class ieDocSet(object):
             #labels_len = len(inst.blabels if self.bertID else inst.labels)
             plabels = pred_labels[i][:len(inst.labels)]
             # generate remlist for a sentence
-            inst.recognize_entity_mentions_from_labels(plabels=plabels, lineno=i, bertID=self.bertID)
+            inst.recognize_entity_mentions_from_labels(plabels=plabels, lineno=i, bertID=bertID)
             # convert recognized entities to original word positions for bert sequence
-            if self.bertID:  inst.convert_bert_entity_mention_positions()
+            if bertID:  inst.convert_bert_entity_mention_positions()
         return
 
     # docset.insts --> inst.remlist --> docset.docdict --> doc.remlist
-    def dispatch_docset_predicted_results(self):
+    def dispatch_docset_predicted_results(self, level='docu', target_docset=None):
         odoc, mno = None, 1
+        tds = target_docset if target_docset else self
         for inst in self.insts:
-            doc = self.contains_doc(inst.id)
-            if not doc:
-                print('DocPmidCon: {}'.format(inst))
-                continue
+            doc = tds.contains_doc(inst.id)
+            if not doc:  continue
+            #
             if doc != odoc: odoc, mno = doc, 1  # if doc changes, set mno to 1
             for rem in inst.remlist:
                 if rem.hsno >= rem.heno:  continue  # bert recognized, but ill-formed for word
@@ -517,49 +497,72 @@ class ieDocSet(object):
                     print(inst)
                     # print(rem)
                     # print(snt.boffsets)
-                sno = inst.offsets[rem.hsno][0]
-                eno = inst.offsets[rem.heno-1][1]
-                ename = doc.text[sno:eno]
-                em = EntityMention(id='T{}'.format(mno), type=rem.type, name=ename, hsno=sno, heno=eno)
-                doc.append_entity_mention(em, gold=False)
+                if level == 'docu':
+                    sno = inst.offsets[rem.hsno][0]
+                    eno = inst.offsets[rem.heno-1][1]
+                    ename = doc.text[sno:eno]
+                    em = EntityMention(did=inst.id, id='T{}'.format(mno), type=rem.type, name=ename, hsno=sno, heno=eno)
+                    doc.append_entity_mention(em, gold=False)
+                else:       # 'sent'
+                    ename = ' '.join(inst.words[rem.hsno:rem.heno])
+                    em = EntityMention(did=inst.id, id='T{}'.format(mno), type=rem.type, name=ename,
+                                       lineno=inst.no, hsno=rem.hsno, heno=rem.heno)
+                    doc.sntlist[inst.no].append_entity_mention(em, gold=False)
                 mno += 1
         return
 
-    def calculate_docset_f1(self, level='inst', mdlfile=None, logfile=None, rstfile=None, verbose=0):
-        flog = sys.stdout
-        if logfile is not None: flog = open(logfile, 'a', encoding='utf8')
-        if verbose > 0:
-            sdt = datetime.now().strftime("%Y-%m-%d, %H:%M:%S")
-            print('\n{}/{}({}), {}, {}'.format(self.wdir, self.id, level, mdlfile, sdt), file=flog)
-        # confusion matrix
-        confusions = np.zeros([len(self.etypedict), len(self.etypedict)], dtype=int)
-        # collect gold and predictions from emlist and remlist
-        prfs = np.zeros([len(self.etypedict), 6], dtype=float)
+    def collect_docset_performance(self, level='inst', avgmode='micro', verbose=0):
+        typedict = self.etypedict
+        # confusion matrix for NER
+        confusions = np.zeros([len(typedict), len(typedict)], dtype=int)
         rstlines = []
+        #
         if level == 'inst': # instance
             for inst in self.insts:
-                match_gold_pred_entity_mentions(inst)
-                collect_ner_confusion_matrix(inst, confusions, self.etypedict)
-                get_ner_labeled_sentences(inst, rstlines, verbose=verbose)
+                inst.match_gold_pred_instances()
+                inst.collect_ner_confusion_matrix(confusions, typedict)
+                inst.get_ner_labeled_sentences(rstlines, verbose=verbose)
         else:   # document
             for _, doc in self.docdict.items():
-                match_gold_pred_entity_mentions(doc)
-                collect_ner_confusion_matrix(doc, confusions, self.etypedict)
-        #
-        if verbose >= 2 and rstfile:  file_list2line(rstlines, rstfile)
-        # sum to prfs
-        sum_ner_confusion_matrix_to_prfs(confusions, prfs=prfs)
-        # output confusion matrix
+                doc.match_gold_pred_instances()
+                doc.collect_ner_confusion_matrix(confusions, typedict)
+        # sum confusions to prfs, noneID is always True for NER
+        prfs = np.zeros([len(typedict), 6], dtype=float)
+        sum_confusion_matrix_to_prfs(confusions, prfs, noneID=True)
+        # calculate prfs
+        calculate_classification_prfs(prfs, avgmode=avgmode)
+        return [confusions, prfs, rstlines]
+
+    def calculate_docset_performance(self, level='inst', mdlfile=None, logfile=None, rstfile=None, avgmode='micro', verbose=0):
+        performance = self.collect_docset_performance(level, avgmode, verbose)
+        aprf = self.output_docset_performance(performance, level, mdlfile, logfile, rstfile, verbose)
+        return aprf
+
+    # verbose: 0-only consile overall performance, 1-confusion/PRF, 2-erroneous instances, 3-all instances
+    def output_docset_performance(self, performance, level='inst', mdlfile=None, logfile=None, rstfile=None, verbose=0):
+        confusions, prfs, rstlines = performance
+        olines = []
         if verbose >= 1:
-            print(sorted(self.etypedict.items(), key=lambda d: d[1]))
-            print('Confusion matrix for entity types:', file=flog)
-            #print(np.array_str(confusions), file=flog)
-            output_confusion_matrix(cm=confusions, ldict=self.etypedict, file=flog)
-        # calculate and output prfs
-        calculate_classification_prfs(prfs, noneID=False, avgmode=self.avgmode)
-        if verbose > 0:  print('\nPRF performance for entity types:', file=flog)
-        output_classification_prfs(prfs, self.etypedict, flog=flog, verbose=verbose)
-        if logfile is not None: flog.close()
+            # output header
+            sdt = datetime.now().strftime("%Y-%m-%d, %H:%M:%S")
+            olines.append('\n{}/{}({}), {}, {}'.format(self.wdir, self.id, level, mdlfile, sdt))
+            # output confusion matrix
+            olines.append('Confusion matrix for entity types:')
+            olines.extend(output_confusion_matrix(cm=confusions, ldict=self.etypedict))
+            # output P/R/F
+            olines.append('\nPRF performance for entity types:')
+            #print(sorted(self.etypedict.items(), key=lambda d: d[1]))
+            olines.extend(output_classification_prfs(prfs, self.etypedict, verbose=verbose))
+        # output result files
+        if verbose >= 2 and level=='inst' and rstfile:
+            file_list2line(rstlines, rstfile)
+        #
+        if logfile is not None:
+            flog = open(logfile, 'a', encoding='utf8')
+            print('\n'.join(olines), file=flog)
+            flog.close()
+        else:  print('\n'.join(olines))
+        # always output the overall performance to the console
         print('{:>6}({}): {}'.format(self.id, level, format_row_prf(prfs[-1])))
         return prfs[-1]
 
@@ -568,10 +571,16 @@ class ieDocSet(object):
     def output_docset_predicted_results(self, rstfile=None, verbose=0):
         # collect
         remlines = []
-        for _, doc in self.docdict.items():
-            for rem in sorted(doc.remlist):
-                remlines.append([doc.id, rem.id, rem.type, rem.hsno, rem.heno, rem.name])
-        remlines = ['\t'.join(remline) for remline in remlines]
+        if self.fmt == 'i':
+            for inst in self.insts:
+                for rem in sorted(inst.remlist):
+                    sem = '{} {}|{}|{} {} {}|{}'.format(inst.id, rem.id, rem.type, rem.name, inst.no, rem.hsno, rem.heno)
+                    remlines.append(sem)
+        else:
+            for _, doc in self.docdict.items():
+                for rem in sorted(doc.remlist):
+                    sem = '{}\t{}\t{}\t{}\t{}\t{}'.format(doc.id, rem.id, rem.type, rem.hsno, rem.heno, rem.name)
+                    remlines.append(sem)
         # output
         if rstfile is not None:
             file_list2line(remlines, rstfile)
@@ -584,44 +593,66 @@ class ieDocSet(object):
         return
 
     # level: 'inst', 'sent', 'docu'
-    def generate_docset_entity_statistics(self, level='inst'):
+    def generate_docset_instance_statistics(self, level='inst'):
         # initialize counts
-        counts = np.zeros([len(self.etypedict)], dtype=int)
+        typedict = self.get_type_dict()
+        counts = np.zeros([len(typedict)], dtype=int)
         # collect statistics
         if level == 'inst':  # instance
+            # Inst may be SequenceLabel, RelationMentions, sBelStatements
             for inst in self.insts:
-                collect_entity_statistics(inst, counts, etypedict=self.etypedict)
+                inst.collect_instance_statistics(counts, typedict)
         elif level == 'docu':       # 'document'
             for _, doc in self.docdict.items():
-                collect_entity_statistics(doc, counts, etypedict=self.etypedict)
+                doc.collect_instance_statistics(counts, typedict)
         elif level == 'sent':
             for _, doc in self.docdict.items():
                 for snt in doc.sntlist:
-                    collect_entity_statistics(snt, counts, etypedict=self.etypedict)
+                    snt.collect_instance_statistics(counts, typedict)
+        # sum
+        counts[-1] = np.sum(counts[:-1], axis=0)
+        return counts
+
+    # statistics for entity mentions specifically
+    # level: 'sent', 'docu'
+    def generate_docset_entity_mention_statistics(self, level='sent'):
+        # initialize counts
+        typedict = self.etypedict
+        counts = np.zeros([len(typedict)], dtype=int)
+        # collect statistics
+        if level == 'docu':       # 'document'
+            for _, doc in self.docdict.items():
+                collect_entity_mention_statistics(doc, counts, typedict)
+        elif level == 'sent':
+            for _, doc in self.docdict.items():
+                for snt in doc.sntlist:
+                    collect_entity_mention_statistics(snt, counts, typedict)
         # sum
         counts[-1] = np.sum(counts[:-1], axis=0)
         return counts
 
     #
-    def evaluate_docset_model(self, op, pred_classes, mdlfile=None, verbose=0):
+    def evaluate_docset_model(self, op, tcfg, pred_classes, mdlfile=None):
         task = self.get_task_fullname()
         # instance-level performance
         lfilename = '{}/{}_{}.log'.format(self.wdir, self.id, task)
         rfilename = '{}/{}_{}.rst'.format(self.wdir, self.id, task)
         pfilename = '{}/{}_{}.prd'.format(self.wdir, self.id, task)
         #
-        self.assign_docset_predicted_results(pred_nos=pred_classes)
+        self.assign_docset_predicted_results(pred_nos=pred_classes, bertID=tcfg.bertID)
         #
         if 'v' in op:   # instance-level validation
-            self.calculate_docset_f1(level='inst', mdlfile=mdlfile, logfile=lfilename, rstfile=rfilename, verbose=verbose)
+            self.calculate_docset_performance(level='inst', mdlfile=mdlfile, logfile=lfilename, rstfile=rfilename,
+                                              avgmode=tcfg.avgmode, verbose=tcfg.verbose)
         # document-level performance
         if self.fmt in 'saf':  # sentence/abstract/full text
             self.dispatch_docset_predicted_results()
             if 'v' in op:   # document-level validation
-                self.calculate_docset_f1(level='docu', mdlfile=mdlfile, logfile=lfilename, verbose=verbose)
+                self.calculate_docset_performance(level='docu', mdlfile=mdlfile, logfile=lfilename,
+                                                  avgmode=tcfg.avgmode, verbose=tcfg.verbose)
         # predict
         if 'p' in op:
-            self.output_docset_predicted_results(rstfile=pfilename, verbose=verbose)
+            self.output_docset_predicted_results(rstfile=pfilename, verbose=tcfg.verbose)
         return
 
 # DocSet for segmented sequence labeling
@@ -632,20 +663,17 @@ class sslDocSet(ieDocSet):
                 wdir = None,
                 id = None,
                 fmt = 'i',
-                model_name = 'Lstm',
-                avgmode = 'micro',
-                elabel_schema = 'SBIEO',  # entity
-                tokenizer = None,
-                slabel_schema = 'IO'  # segment
+                elabel_schema='SBIEO',
+                slabel_schema='IO',
                 ):
-        super(sslDocSet, self).__init__(task, stask, wdir, id, fmt, model_name, avgmode, elabel_schema, tokenizer)
+        super(sslDocSet, self).__init__(task, stask, wdir, id, fmt, elabel_schema)
         self.slabel_schema = slabel_schema
         self.stypedict = {}
         self.slabeldict = {}
 
-    def create_segment_label_dict(self):
+    def create_segment_label_dict(self, label_schema):
+        self.slabel_schema = label_schema
         self.slabeldict = {'O':0}
-        label_schema = self.slabel_schema
         for type in sorted(self.stypedict):
             labeldict = {'{}-{}'.format(label, type):len(self.slabeldict)+i for i, label in enumerate(label_schema[:-1])}
             self.slabeldict.update(labeldict)
@@ -653,36 +681,36 @@ class sslDocSet(ieDocSet):
 
     # collect label types from the sentences in every doc
     def create_segment_type_dict(self):
-        typedict = {}
+        typedict, self.stypedict = {}, {}
         for inst in self.insts:  # inst is SequenceLabel
             for em in inst.smlist:
                 if em.type not in typedict:
                     typedict[em.type] = len(typedict)
         # sort
-        for i, key in enumerate(sorted(typedict)):    typedict[key] = i
-        self.stypedict = typedict
+        for i, key in enumerate(sorted(typedict)):    self.stypedict[key] = i
         return
 
     # create type dict from entity mentions
-    def create_label_type_dict(self, filename=None, verbose=0):
+    def create_type_label_dict(self, tcfg, filename=None):
         # entity type dict
         super(sslDocSet, self).create_entity_type_dict()
-        super(sslDocSet, self).create_entity_label_dict()
+        super(sslDocSet, self).create_entity_label_dict(tcfg.elabel_schema)
         # segment type dict
         self.create_segment_type_dict()
-        self.create_segment_label_dict()
+        self.create_segment_label_dict(label_schema=tcfg.slabel_schema)
         # save to config file
         if filename is not None:
-            if verbose:  print('Saving config to {}'.format(filename))
+            if tcfg.verbose:  print('Saving config to {}'.format(filename))
             with open(filename, 'w') as outfile:
                 cfg_dict ={'eschema':self.elabel_schema, 'etype':self.etypedict, 'elabel':self.elabeldict,
                            'sschema':self.slabel_schema, 'stype':self.stypedict, 'slabel':self.slabeldict}
+                print(cfg_dict)
                 json.dump(cfg_dict, outfile, indent=2, sort_keys=False)
         return
 
-    def set_label_type_dict(self, tdict):
+    def set_type_label_dict(self, tdict):
         # entity
-        super(sslDocSet, self).set_label_type_dict(tdict)
+        super(sslDocSet, self).set_type_label_dict(tdict)
         # segment
         self.slabel_schema = tdict['sschema']
         self.stypedict = tdict['stype']
@@ -692,37 +720,31 @@ class sslDocSet(ieDocSet):
     def get_segment_label_dict(self):
         return self.slabeldict
 
-    def generate_docset_instance_features(self, verbose=0):
+    def generate_docset_instance_features(self, tcfg):
         insts = self.insts
-        if verbose:
-            print('Generating {} {} features'.format(self.get_task_fullname(), self.model_name))
+        if tcfg.verbose:
+            print('Generating {} {} features'.format(self.get_task_fullname(), tcfg.model_name))
             insts = tqdm(insts)
         for inst in insts:
-            inst.generate_instance_features(self.bertID, self.tokenizer, eschema=self.elabel_schema, sschema=self.slabel_schema)
+            inst.generate_instance_features(tcfg, self)
         return
 
     # output ner candidates for a docset
     def output_docset_instance_candidates(self, exams, verbose=0):
         # get the label dictionary
-        labeldict = self.get_label_type_dict()
-        num_classes = len(labeldict)
+        labeldict = self.get_label_dict()
+        num_classes = [len(labeldict)]
         segdict = self.get_segment_label_dict()
         # get integer-type data
         data = [[[[self.get_word_idx(word) for word in words],               # word_idx
                  [(1 if slabel != 'O' else 0) for slabel in slabels],        # seg_ids
                  [segdict[slabel] for slabel in slabels if slabel != 'O']],  # seg type
                 [[labeldict[label] for label in labels]]] for words, labels, slabels in exams]
-        # display an example
+        # find an example
+        exno = 0
         if verbose:
             for i, inst in enumerate(self.insts):
                 if len(inst.emlist) > 1:  # at least two entity mentions
-                    print(inst)
-                    print()
-                    for j, exam in enumerate(exams[i]):  print('I{}:'.format(j), exam)
-                    for j, feature in enumerate(data[i][0]):  print('F{}:'.format(j), feature)
-                    for j, label in enumerate(data[i][1]): print('L{}:'.format(j), label)
+                    exno = i
                     break
-            # display the label dictionary
-            print('\n{:,} {} instances with {} classes'.format(len(data), self.id, num_classes))
-            print(sorted(labeldict.items(), key=lambda d: d[1]))
-        return data, num_classes
+        return data, num_classes, labeldict, exno

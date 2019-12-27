@@ -41,6 +41,7 @@ class reDoc(ieDoc):
             snt = Doc(id=self.id, no=i, title=self.title, text=dline)
             self.recover_entity_mentions(tcfg, snt)
             self.transfer_relation_mentions(snt)
+            #self.generate_sentence_features()
             self.sntlist.append(snt)
         return
 
@@ -48,9 +49,9 @@ class reDoc(ieDoc):
         # build relation mention list for the sentence
         for rid, rm in self.rmdict.items():
             if rm.visited:  continue
-            if rm.emid1 in snt.emdict and rm.emid2 in snt.emdict:
-                em1 = snt.emlist[snt.emdict[rm.emid1]]
-                em2 = snt.emlist[snt.emdict[rm.emid2]]
+            em1 = snt.get_entity_mention(rm.emid1)
+            em2 = snt.get_entity_mention(rm.emid2)
+            if em1 and em2:
                 # whether em1 and em2 are overlapped
                 if em1.lineno == em2.lineno and (em1.hsno == em2.hsno or em1.heno == em2.heno):
                     print('Overlapped entities:\n{}\n{}'.format(em1, em2))
@@ -95,6 +96,29 @@ class reDoc(ieDoc):
         rm.insert_entity_mentions_delimiters(em1, em2, recover=False)
         return rm
 
+    # match relation mentions between gold and recognized
+    def match_gold_pred_instances(self):
+        # rmdict: rid --> relation mention
+        for rid, rm in self.rmdict.items():
+            rm.set_predicted_type(ptype=None, prvsid=False)
+            # recognized rm, no matter the relation type
+            if rid in self.rrmdict:
+                rrm = self.rrmdict[rid]
+                if rrm.ptype == 'None': # duplicated rid, using the last one
+                    print('ErrDupRelMen: {} {}'.format(self.id, rid))
+                rm.set_predicted_type(ptype=rrm.ptype, prvsid=rrm.prvsid)
+                rrm.type, rrm.rvsid = rm.type, rm.rvsid
+        return
+
+    def collect_re_confusion_matrices(self, docset, rconfusions, confusions):
+        for _, rm in self.rmdict.items():
+            rm.collect_re_confusion_matrices(docset, rconfusions, confusions, gold=True)
+        for _, rrm in self.rrmdict.items():
+            rrm.collect_re_confusion_matrices(docset, rconfusions, confusions, gold=False)
+
+    def collect_instance_statistics(self, counts, typedict):
+        for _, rm in self.rmdict.items():
+            rm.collect_instance_statistics(counts, typedict)
 
 # Doc class for unary relation extraction
 class ureDoc(reDoc):
