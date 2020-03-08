@@ -33,7 +33,9 @@ options = OptionConfig(model_name='LstmCrf', epochs=15, batch_size=32,
 ```
 OptionConfig can pass some option parser during the training procedure: 
 model_name, epochs and batch_size are model, epoches and batch size used in training; 
+
 valid_ratio is the percentage used when randomly split data as validation set;
+
 fold_num us the number of folder used in cross validation.
 ```shell
 main(op='r', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
