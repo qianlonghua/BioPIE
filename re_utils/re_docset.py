@@ -1,6 +1,6 @@
 
-from ie_docset import *
-from re_doc import *
+from ner_utils.ner_docset import *
+from re_utils.re_doc import *
 
 
 # return meta and features of a relation instance in *.wrd
@@ -30,7 +30,7 @@ def get_re_instance(flines):
 #
 
 # document set for NER
-class reDocSet(ieDocSet):
+class reDocSet(nerDocSet):
     def __init__(self,
                  task = None,
                  stask = None,
@@ -63,35 +63,45 @@ class reDocSet(ieDocSet):
         inst_get = get_re_instance(flines)
         metas, feats = next(inst_get)
         while metas:
-            tokens = [feat[1] for feat in feats]
             rid = '{}-{}-{}-{}'.format(metas[0][1], metas[0][2], metas[0][3], metas[0][4])
             rvsid = (metas[1][1] == 'R')
             type = metas[1][2] if rvsid else metas[1][1]
+            hsno1, heno1 = int(metas[2][-2])-1, int(metas[2][-1])
+            hsno2, heno2 = int(metas[3][-2])-1, int(metas[3][-1])
             #
+            tokens = Tokens(words=[feat[1] for feat in feats])
             inst = RelationMention(id=rid, emid1=metas[0][3], emid2=metas[0][4], type=type, rvsid=rvsid,
-                                   text=' '.join(tokens))
-            #self.append_relation_candidate(inst)
+                                   tokens=tokens, hsno1=hsno1, heno1=heno1, hsno2=hsno2, heno2=heno2)
+            #
             self.append_instance(inst)
             metas, feats = next(inst_get)
         return
 
-    # prepare doc set for biomedical relation extraction
     def prepare_docset_abstract(self, op, tcfg, Doc):
+        """
+        prepare doc set for biomedical relation extraction
+        :param op:
+        :param tcfg:
+        :param Doc:
+        :return:
+        """
         self.load_docset_bio_text(Doc, verbose=tcfg.verbose)
-        efilename = '{}/{}.ent'.format(self.wdir, self.id)
+        ent_file_suf = '.prd' if tcfg.test_file_id and tcfg.test_ent_pred else ''
+        efilename = '{}/{}.ent{}'.format(self.wdir, self.id, ent_file_suf)
         self.load_docset_entity_mentions(efilename, verbose=tcfg.verbose)
         self.check_docset_entity_mentions(verbose=tcfg.verbose)
         if op != 'p':  # not only prediction
-            self.load_docset_relation_mentions(verbose=tcfg.verbose)
+            self.load_docset_relation_mentions(tcfg)
         self.preprocess_docset_entity_mentions(tcfg)
         self.generate_docset_sentences(tcfg, Doc)
         self.collect_docset_instances(tcfg)
         return
 
-    def load_docset_relation_mentions(self, verbose=0):
-        rfilename = '{}/{}.rel'.format(self.wdir, self.id)
-        if not os.path.exists(rfilename):  return False
-        rlines = file_line2array(rfilename, verbose=verbose)
+    def load_docset_relation_mentions(self, tcfg, filename=None):
+        # if filename is None, load the default relation file
+        if filename is None:  filename = '{}/{}.rel'.format(self.wdir, self.id)
+        if not os.path.exists(filename):  return False
+        rlines = file_line2array(filename, verbose=tcfg.verbose)
         for pmid, rid, emid1, emid2, type, name in rlines:
             # 23538162,T5-T19,T5,T19,4,DOWNREGULATOR
             if emid1 == emid2:  continue  # self-relationship
@@ -99,8 +109,8 @@ class reDocSet(ieDocSet):
             if doc is None:  continue
             # check entity
             em1, em2 = doc.get_entity_mention(emid1), doc.get_entity_mention(emid2)
-            if not em1 and verbose:  print('EntIdErr: {} {}'.format(pmid, emid1))
-            if not em2 and verbose:  print('EntIdErr: {} {}'.format(pmid, emid2))
+            if not em1 and tcfg.verbose and not tcfg.test_ent_pred:  print('EntIdErr: {} {}'.format(pmid, emid1))
+            if not em2 and tcfg.verbose and not tcfg.test_ent_pred:  print('EntIdErr: {} {}'.format(pmid, emid2))
             # reverse the relationship if necessary
             rvsID = False
             if em1 and em2 and em2.heno <= em1.hsno:  # if protein preceeds chemical
@@ -110,8 +120,9 @@ class reDocSet(ieDocSet):
             rid = '{}-{}'.format(emid1, emid2)
             types = type.split('|')
             if len(types) == 1:  types = [type, None]
-            #
-            rm = RelationMention(id=rid, type=types[0], stype=types[1], rvsid=rvsID, name=name, emid1=emid1, emid2=emid2)
+            # build relation mention
+            rm = RelationMention(id=rid, type=types[0], stype=types[1], rvsid=rvsID, name=name, emid1=emid1, emid2=emid2,
+                                 hsno1=em1.hsno, heno1=em1.heno, hsno2=em2.hsno, heno2=em2.heno)
             doc.append_relation_mention(rm)
         return True
 
@@ -184,14 +195,15 @@ class reDocSet(ieDocSet):
     def get_type_dict(self):  return self.rtypedict
 
     # output relation candidates
-    def output_docset_instance_candidates(self, exams, verbose=0):
+    def get_docset_feature_label(self, exams, verbose=0):
         # get label type dict
         labeldict = self.get_label_dict()
         num_classes = [len(labeldict)]
 
         # [[X1, X2],[Y1,Y2]] while Xn are lists, but Yn are not necessary
-        data = [[[[self.get_word_idx(word) for word in words], [0]*len(words),[len(words)]],
-                 [labeldict[label]]] for words, label in exams]
+        #print(len(self.worddict))
+        data = [[[[self.get_word_idx(word) for word in words], [0]*len(words), empos],
+                 [labeldict[label]]] for words, label, empos in exams]
 
         # find a positive example to demonstrate
         exno = 0
@@ -229,11 +241,11 @@ class reDocSet(ieDocSet):
         rstlines = []
         #
         if level == 'inst':  # instance
-            for rmc in self.insts:
+            for rmc in self.instances():
                 rmc.collect_re_confusion_matrices(self, rconfusions, confusions, gold=True)
                 rmc.get_re_labeled_instance(rstlines, verbose=verbose)
         else:                # 'document'
-            for _, doc in self.docdict.items():
+            for doc in self.documents():
                 doc.match_gold_pred_instances()
                 doc.collect_re_confusion_matrices(self, rconfusions, confusions)
         # sum gold and predictions
@@ -294,25 +306,29 @@ class reDocSet(ieDocSet):
         print('{:>6}({}): {}'.format(self.id, level, format_row_prf(prfs[-1])))
         return prfs[-1]
 
-    # for RE/URE
-    def dispatch_docset_predicted_results(self, level='docu', target_docset=None):
-        # docset.insts --> rmc.prvsid, rmc.ptype -->
-        # docset.docdict --> doc.rmdict/doc.rrmdict
+    def transfer_docset_predicted_results(self, level='docu', target_docset=None):
+        """
+        dispatch relation instances to documents or sentences in the target docset
+        :param level: 'docu', 'sent'
+        :param target_docset: the docset to be dispatched
+        :return: None
+        """
         # clear the predicted results
         tds = target_docset if target_docset else self
-        for _, doc in tds.docdict.items():
-            for _, rm in doc.rmdict.items():
+        units = tds.documents() if level == 'docu' else self.sentences()
+        for unit in units:   # documents or sentences
+            for _, rm in unit.rmdict.items():
                 rm.set_predicted_type(ptype=None, prvsid=False)
-            doc.rrmdict = {}
+            unit.rrmdict = {}
         # dispatch results to documents
-        for rmc in self.insts:
+        for rmc in self.instances():
             if rmc.ptype == 'None':  continue          # negative is neglected
             #print(rmc)
             if self.task == 'ure':  # URE
-                did, _, emid1 = rmc.id.split('-')       # docid-lineno-emid1
+                did, lineno, emid1 = rmc.id.split('-')       # docid-lineno-emid1
                 rid, emid2 = emid1, None
             else:  #  RE
-                did, _, emid1, emid2 = rmc.id.split('-')  # docid-lineno-emid1-emid2
+                did, lineno, emid1, emid2 = rmc.id.split('-')  # docid-lineno-emid1-emid2
                 rid = '{}-{}'.format(emid1, emid2)  # id for relation mention in an abstract
             # check whether did exists
             doc = tds.contains_doc(did)
@@ -320,53 +336,127 @@ class reDocSet(ieDocSet):
             # add the recognized relation mention to rrm
             rm = RelationMention(id=rid, emid1=emid1, emid2=emid2)
             rm.set_predicted_type(ptype=rmc.ptype, prvsid=rmc.prvsid)
-            doc.append_relation_mention(rm, gold=False)
+            #
+            if level == 'docu':
+                doc.append_relation_mention(rm, gold=False)
+            else:   # 'sent'
+                doc.sntlist[int(lineno)].append_relation_mention(rm, gold=False)
         return
 
-    # output predicted RE/URE results
-    # RE: pmid emid1 emid2 3
-    # URE: pmid emid1 3
-    def output_docset_predicted_results(self, rstfile=None, verbose=0):
-        # collect
-        rmlines = []
-        for rrm in self.insts:  # inst is RelationMention
-            if rrm.ptype == 'None':  continue
-            ids = rrm.id.split('-')  # the 1st token is pmid by default
-            if self.task == 'ure':
-                rmlines.append([ids[0], rrm.emid1, rrm.ptype])
-            else:
+    def output_docset_predicted_results(self, tcfg, rstfile=None, level='inst'):
+        self.output_docset_re_results(tcfg, rstfile, level)
+
+    def output_docset_re_results(self, tcfg, rstfile=None, level='inst'):
+        """
+        output predicted RE/URE results
+        RE: pmid rid emid1 emid2 3 typename
+        URE: pmid emid1 3
+        :param rstfile:
+        :param level:
+        :param verbose:
+        :return:
+        """
+        def output_instance_relation_mention(rrm, task, did=None):
+            if did is None:
+                ids = rrm.id.split('-')  # the 1st token is pmid by default
+                did = ids[0]
+            if task == 'ure':
+                return [did, rrm.emid1, rrm.ptype]
+            else:   # 're'
                 emid1, emid2 = rrm.emid1, rrm.emid2
                 if rrm.prvsid:  emid1, emid2 = emid2, emid1
-                rmlines.append([ids[0], emid1, emid2, rrm.ptype])
+                rid = '{}-{}'.format(emid1, emid2)
+                return [did, rid, emid1, emid2, rrm.ptype, rrm.ptype]
+
+        # force to use instances for instance-level DocSet
+        if self.fmt == 'i':  level = 'inst'
+        units = self.units(level)
+        rmlines = []
+        if level == 'inst':
+            for rrm in units:  # inst is RelationMention
+                if rrm.ptype != 'None':
+                    rmlines.append(output_instance_relation_mention(rrm, self.task))
+        else:  # for documents and sentences
+            for unit in units:
+                for _, rrm in unit.rrmdict.items():
+                    if rrm.type != 'None':
+                        rmlines.append(output_instance_relation_mention(rrm, self.task, unit.id))
         # sort the output
         rmlines = ['\t'.join(rmline) for rmline in sorted(rmlines)]
         # output
         if rstfile is not None:
             file_list2line(rmlines, rstfile)
-        else:
-            print(rmlines)
-        #
-        if verbose:
-            dstr = ' to {}'.format(rstfile) if rstfile else '.'
-            print('\nOutput totally {} relation mentions{}'.format(len(rmlines), dstr))
+            if tcfg.verbose:
+                dstr = ' to {}'.format(rstfile) if rstfile else '.'
+                print('\nOutput totally {} {}-level relation mentions{}'.format(len(rmlines), level, dstr))
         return
 
+    # level: 'inst', 'sent', 'docu'
+    def generate_docset_instance_statistics(self, level='inst'):
+        counts = self.generate_docset_relation_mention_statistics(level)
+        return counts
+
+    def generate_docset_relation_mention_statistics(self, level='sent'):
+        """
+        :param level: 'inst', 'sent', 'docu'
+        :return: statistics for relation mentions specifically
+        """
+        # initialize counts
+        typedict = self.rtypedict
+        counts = np.zeros([len(typedict)], dtype=int)
+        # collect statistics
+        for unit in self.units(level):
+            if level == 'inst':
+                collect_instance_statistics(unit.type, counts, typedict)
+            else:
+                for _, rm in unit.rmdict.items():
+                    collect_instance_statistics(rm.type, counts, typedict)
+        # sum statistics
+        counts[-1] = np.sum(counts[:-1], axis=0)
+        return counts
+
+    def print_docset_instances(self, filename=None, level='docu', verbose=0):
+        """
+        print docset instances to the screen or file
+        :param filename:  file to be printed to
+        :param level: unit level
+        :return:
+        """
+        olines = []
+        units = self.units(level)
+        for unit in units:
+            if level == 'inst':
+                olines.append(unit.__str__())
+            else:
+                if len(unit.rmdict) > 0:
+                    olines.append('\nID: {}'.format(unit.id))
+                for _, rm in unit.rmdict.items():
+                    olines.append(rm.__str__())
+        #
+        if filename is None:
+            print('\n'.join(olines))
+        else:
+            file_list2line(olines, filename, verbose=verbose)
+        return
 
 # DocSet class for unary relation extraction
 class ureDocSet(reDocSet):
     # load unary relation mentions
-    def load_docset_relation_mentions(self, verbose=0):
-        rfilename = '{}/{}.urel'.format(self.wdir, self.id)
-        rlines = file_line2array(rfilename, verbose=verbose)
+    def load_docset_relation_mentions(self, tcfg, filename=None):
+        if filename is None:  filename = '{}/{}.urel'.format(self.wdir, self.id)
+        if not os.path.exists(filename):  return False
+        rlines = file_line2array(filename, verbose=tcfg.verbose)
         for pmid, emid1, type, name in rlines:
             # 23538162, T5, 4, DOWNREGULATOR
             doc = self.contains_doc(pmid)
             if doc is None:  continue
             # check entity id
-            if emid1 not in doc.emdict and verbose:  print('EntIdErr: {} {}'.format(pmid, emid1))
+            em1 = doc.get_entity_mention(emid1)
+            if em1 is None and tcfg.verbose:  print('EntIdErr: {} {}'.format(pmid, emid1))
             types = type.split('|')
             if len(types) == 1:  types = [type, None]
             #
-            urm = RelationMention(id=emid1, type=types[0], stype=types[1], name=name, emid1=emid1)
+            urm = RelationMention(id=emid1, type=types[0], stype=types[1], name=name, emid1=emid1,
+                                  hsno1=em1.hsno, heno1=em1.heno)
             doc.append_relation_mention(urm)
         return

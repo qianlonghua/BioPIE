@@ -90,7 +90,7 @@ def mwrite(pID, pmess):
     if not pID: write(pmess)
     return
 
-biophRE = re.compile('(^[A-Z]{1,4})([T|t]\d+$)')
+biophRE = re.compile('(^[A-Z]{4})([T|t]\d+$)')
 # determine if a token is a bio entity mention
 # return:  token, etype, or False
 def is_bio_entity(token):
@@ -173,9 +173,10 @@ def safe_remove_file(sfilename):
     return False
 
 # copy the sfilename if it exists, others remove tfilename if it exists
-def safe_copy_file(sfilename, tfilename):
+def safe_copy_file(sfilename, tfilename, verbose=0):
     if os.path.exists(sfilename):
         shutil.copyfile(sfilename, tfilename)
+        if verbose:  print('Copy file {} to {}'.format(sfilename, tfilename))
         return True
     safe_remove_file(tfilename)
     return False
@@ -218,9 +219,9 @@ def file_line2array(sfilename, fcoding='utf8', lowerID=False, stripID=True, sepc
     return arrays
 
 # write a list of lines into a file
-def file_list2line(lines, dfilename, fcoding='utf8', verbose=0):
+def file_list2line(lines, dfilename, fcoding='utf8', verbose=0, mode='w'):
     if verbose:  print('Saving {:,} lines to {} ...'.format(len(lines), dfilename))
-    foutput = open(dfilename, 'w', encoding=fcoding)
+    foutput = open(dfilename, mode, encoding=fcoding)
     print('\n'.join(lines), file=foutput)
     foutput.close()
     return

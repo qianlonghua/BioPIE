@@ -1,21 +1,21 @@
 """
-processing document and sentence
+processing documents and sentences
 """
 from collections import defaultdict
 
-from ie_instance import *
+from ner_utils.ner_instance import *
 
 #BIO_SPECIAL_CHARS = ((0xa0, 0x20), (0xa0, 0x20))
 # the first is for CHEMD/train.txt, the others are for CEMP/train/dev
-BIO_SPECIAL_CHARS = ((chr(771), '~'),(chr(191),'-'), ('?', '-'), (chr(0xad),'-'),('⁢','-'), ('\ufeff', ''))
+BIO_SPECIAL_CHARS = ((chr(771), '~'),(chr(191),'-'), (chr(0xad),'-'), ('\ufeff', ''),
+                     ('?', '-'), ('⁢','-'), ('`', "'"))
 # "H-CO(X̃(2)A')" in CHEMD/train.txt
 
-BIO_SPECIAL_TOKENS = (('&#8212;', '--'), ('`', "'"),
-                  ('( +/+ )', '-wildtype '), ('(+/+)', '-wildtype '), ('+/+', '-wildtype '),
-                  ('( +/- )', '-knockdown '), ('(+/-)', '-knockdown '),
-                  ('( -/- )', '-knockout '), ('(-/-)', '-knockout '), ('-/-', '-knockout '),
-                  ('--', ' -- '), ('+/-', ' +/- ')
-                 )
+BIO_SPECIAL_TOKENS = (('&#8212;', '--'),
+                      ('( +/+ )', '-wildtype '), ('(+/+)', '-wildtype '), ('+/+', '-wildtype '),
+                      ('( +/- )', '-knockdown '), ('(+/-)', '-knockdown '),
+                      ('( -/- )', '-knockout '), ('(-/-)', '-knockout '), ('-/-', '-knockout '),
+                      ('--', ' -- '), ('+/-', ' +/- '))
 
 # if a position is in a range
 def bio_in_range(pos, ranges):
@@ -181,10 +181,9 @@ def tokenize_bio_sentence(sline):
         elif sline[i:i+2] in ("'s", "'S") and sline[i+2] == ' ':    # 's 'S followed by a space
             dline += sline[pos:i] + ' ' + sline[i]
             pos = i + 1
-        #
-        elif sline[i] == "'" and sline[i-1].isdigit(): # omit ' following digit, e.g., 5'-flanking
-            dline += sline[pos:i]
-            pos = i + 1
+        # elif sline[i] == "'" and sline[i-1].isdigit(): # omit ' following digit, e.g., 5'-flanking
+        #     dline += sline[pos:i]
+        #     pos = i + 1
         # word separators
         elif sline[i] in wordSepCHs:
             dline += sline[pos:i] + ' ' + sline[i] + ' '
@@ -318,16 +317,16 @@ def bio_coref_build(ts):
 
 ENT_BRACKET_ID = 0  # surrounded by []
 
-# return a sentence with all bio entity placeholders replaced by CHEM_1, GENE_1,...
-# bld_ent_seq: 0-type only, 1-type+seq_no
-def blind_text_entity_placeholders(text, bld_ent_mode=0):
+# return a sentence with all bio entity mention placeholders replaced by CHEM_1, GENE_1,...
+# bld_ent_seq: 0-type only, 1-type+seq_no, 2- entity id
+def blind_entity_mention_placeholders(text, bld_ent_mode=0):
     words = text.split(' ')
     edict = {}
     for i, word in enumerate(words):
         etype, emid = is_bio_entity(word)
         if not emid: continue    # not an entity mention
         # increase entity sequence no like GENE_1, CHEM_1, DISE_1
-        if not bld_ent_mode:
+        if bld_ent_mode == 0:   # 0-entity type, 1-type_seq, 2-entity id
             words[i] = etype
         else:
             if etype not in edict:  edict[etype] = 1
@@ -351,34 +350,38 @@ def split_bio_sentences(fmt, text):
     return lines
 
 
-class ieDoc(object):
+class nerDoc(object):
     # one document for information extraction
     def __init__(self,
                  id = None,
                  no = None,
                  title = '',
-                 text = ''
+                 text = '',
+                 tokensID = False     # whether generate tokens from text
                  ):
         self.id = id
         self.no = no
         self.title = title
         self.otext = text   # original text
         self.text = text    # preprocessed text
-        # these 4 fields are for sentence, not for document
-        self.words = []
-        self.offsets = []   # offset of each word in the original document
-        self.bwords = []
-        self.boffsets = []
+        #
+        self.tokens = Tokens(text.split(' ') if tokensID else [])    # Tokens
 
-        self.emdict = {}    # entity mention dict from id-->index
+        self.emdict = {}    # entity mention dict from id --> EntityMention
         self.emlist = []    # entity mention list
         self.remlist = []   # recognized entity mentions
 
         self.sntlist = []   # sentence list for a doc
         self.crfdict = defaultdict(list)    # coreference dictionary from an entity to its referents
 
+    @ property
+    def words(self):  return self.tokens.words
+
+    @ property
+    def offsets(self):  return self.tokens.offsets
+
     def __copy__(self):
-        doc = ieDoc()
+        doc = nerDoc()
         for att in self.__dict__.keys():
             if type(self.__dict__[att]) not in (list, dict):  doc.__dict__[att] = self.__dict__[att]
         return doc
@@ -393,9 +396,16 @@ class ieDoc(object):
         rstr = '\nID: {}\tNO: {} TITLE: {}{}{}{}{}'
         return rstr.format(self.id, self.no, self.title, stext, swords, selist, srelist)
 
+    def build_tokens(self):   # for sentence
+        self.tokens = Tokens(words=self.text.split(' '))
+        return
+
+    def build_sntlist_tokens(self):   # for sentence
+        for snt in self.sntlist:  snt.build_tokens()
+
     def get_entity_mention(self, emid):
         if emid not in self.emdict:  return None
-        return self.emlist[self.emdict[emid]]
+        return self.emdict[emid]
 
     def _index_entity_mentions(self):
         self.emdict = {em.id:i for i, em in enumerate(self.emlist)}
@@ -403,13 +413,13 @@ class ieDoc(object):
     def append_entity_mention(self, em, gold=True):
         if gold:
             self.emlist.append(em)
-            self.emdict[em.id] = len(self.emlist) - 1   # update emdict
+            self.emdict[em.id] = em
         else:
             self.remlist.append(em)
 
     def sort_entity_mentions(self):
         self.emlist.sort()
-        self._index_entity_mentions()  # reindex entity dict from id->index_no
+        #self._index_entity_mentions()  # reindex entity dict from id->index_no
 
     # add an entity to a sentence, move to ie_conversion.py
     def add_entity_mention_to_sentence(self, did, sent_no, feats, eno, spos, epos, type):
@@ -431,25 +441,30 @@ class ieDoc(object):
             self.text = self.text.replace(schar, dchar)
         return
 
-    # start numbering from 0, transfer from otext to text
     def replace_entity_mention_with_placeholder(self):
+        """
+        start numbering from 0, transfer from otext to text
+        :return: set self.text
+        """
         tline = self.otext  #
         sline = ''
         lspos, lepos = -1, 0    # # last entity position
         for i, em in enumerate(self.emlist):
-            # always insert spaces around entity mentions
-            #if em.hsno == lspos and em.heno == lepos: continue    # double-typed entities
             # skip when visible is False
             if not em.visible:   continue
             sline += '{} {}{} '.format(tline[lepos:em.hsno], em.type[:4], em.id)  # type length is at most 4
             lspos, lepos = em.hsno, em.heno
         sline += tline[lepos:]
-        self.text = sline
+        self.text = ' '.join(re.split('[ ]+', sline))
         return
 
-    # set visible to False for nested or duplicated entities
-    # add them to coreferce list if keepID is True
     def mask_nested_entity_mentions(self, nestedID=False, doubleID=False):
+        """
+        set visible to False for nested or duplicated entities
+        :param nestedID: add nested entities to coreference list if set to True
+        :param doubleID: add duplicated entities to coreference list if set to True
+        :return:
+        """
         ents = self.emlist
         eidx, spos, epos = -1, -1, -1  # the last entity index and start, end position
         #nextID, prevID, doubleID = True, True, True # nested in next or preceeding entities, or double typed
@@ -478,8 +493,11 @@ class ieDoc(object):
                 eidx, spos, epos = i, ents[i].hsno, ents[i].heno
         return
 
-    # mask outlayer entities or duplicated entities
     def mask_outer_entity_mentions(self):
+        """
+        mask out-layer entities or duplicated entities
+        :return: set them to invisible
+        """
         ents = self.emlist
         for i, ent in enumerate(ents):
             # include or equal the preceding one
@@ -490,50 +508,71 @@ class ieDoc(object):
                 ent.visible = False
         return
 
-
-    # mask nested entities, replace with placeholders and special tokens
     def preprocess_document_entity_mentions(self, tcfg):
+        """
+        mask nested entities, replace with placeholders and special tokens
+        :param tcfg:
+        :return:
+        """
         self.sort_entity_mentions()
         self.mask_nested_entity_mentions(nestedID=tcfg.ent_nest, doubleID=tcfg.dbl_ent_type)
         self.replace_entity_mention_with_placeholder()
-        self.replace_bio_special_tokens(BIO_SPECIAL_TOKENS)
+        if tcfg.sent_simplify:  # change the text length
+            self.replace_bio_special_tokens(BIO_SPECIAL_TOKENS)
         return
 
-    # align the original document with sentences
-    def align_document_with_sentences(self, verbose=0):
+    def align_document_with_sentences(self, verbose=0, original=False):
+        """
+        align the original/text document with sentences, generate Tokens with offsets for sentences
+        :param verbose:
+        :return: set words and their corresponding offsets in the tokens
+        """
         i = 0  # start from 0 in the document
-        text = self.text
+        text = self.otext if original else self.text
         for snt in self.sntlist:
-            snt.words = snt.text.split()    # ' '
-            snt.offsets = []
-            for word in snt.words:
-                # scan for the word in the document
-                token = ''
-                while i < len(text):
-                    if not text[i].isspace():  break
-                    i += 1
+            # prepare Tokens
+            #snt.tokens = Tokens(snt.text.split())
+            for k, word in enumerate(snt.words):
+                etype, emid = is_bio_entity(word)
+                if etype:
+                    em = self.get_entity_mention(emid)
+                    if em:
+                        snt.tokens[k].offsets = [em.hsno, em.heno]
+                        i = em.heno
+                        continue
+                # skip spaces
+                while i < len(text) and text[i].isspace():  i += 1
                 j = i
                 # match the next word
+                token = ''
                 while i < len(text):
-                    if not token.isspace():
+                    if not text[i].isspace():     # token --> text[i]
                         token += text[i]
                         if token == word:
                             i += 1
-                            snt.offsets.append([j, i])
+                            snt.tokens[k].offsets = [j, i]
                             break
                     i += 1
-            #print(snt.offsets)
             # check whether all words are aligned
             if verbose > 0 and len(snt.words) != len(snt.offsets):
                 print('\nWords and offsets do not match!')
+                print(text)
+                print(self.text)
+                print()
                 print(snt)
                 print('words:', snt.words, len(snt.words))
-                print('offsets:', snt.offsets)
-                #for k in range(snt.no):  print(k, self.sntlist[k].text)
+                print('offsets:', snt.offsets, len(snt.offsets))
+                for i in range(min(len(snt.words), len(snt.offsets))):
+                    pos = snt.offsets[i]
+                    print(i, snt.words[i], snt.offsets[i], text[pos[0]:pos[1]])
         return
 
-    # transfer entity mention from a document to sentences
-    def transfer_entity_mentions_from_document_to_sentences(self, verbose=0):
+    def transfer_document_entity_mentions(self, verbose=0):
+        """
+        transfer entity mention from a document to sentences
+        :param verbose:
+        :return: set snt.emdict
+        """
         #
         self.mask_outer_entity_mentions()
         lineno  = 0  # start from line 0
@@ -555,71 +594,83 @@ class ieDoc(object):
                     break
                 # entity mention across multiple sentences
                 elif em.hsno < offsets[-1][1] and em.heno > offsets[-1][1]:
-                    if verbose or self.id == 'CA2144312C':
+                    if verbose:
                         print('\nEntAcrossMultiSents: {} {}'.format(self.id, em))
-                        #print(self)
                     break
-                #elif em.hsno >= offsets[-1][1]:
                 lineno += 1
-            #
+            # valid entity mention
             if spos >= 0 and epos >= 0:
                 nem = em.__copy__(lineno=lineno, hsno=spos, heno=epos+1)
                 self.sntlist[lineno].append_entity_mention(nem)
         # debug purpose
-        if verbose or self.id == 'WO2014139150A1':
-            pno = len(self.emlist)
-            sno = sum([len(snt.emlist) for snt in self.sntlist])
-            if verbose >= 1 and pno > sno:
-                print('\nEntNumDocSnts: {} {} {}'.format(self.id, pno, sno))
-                if verbose >= 2 and 1 == 0:
-                    for em in self.emlist:  print(em)
-                    mset = []
-                    for snt in self.sntlist:
-                        mset.extend([em.id for em in snt.emlist])
-                    pset = set(sorted(self.emdict.keys()))
-                    mset=set(mset)
-                    eids = pset.difference(mset)
+        if verbose:  # the numbers of entity mentions in doc and snt are different
+            dset = set(em.id for em in self.emlist if em.visible)
+            sset = set(em.id for snt in self.sntlist for em in snt.emlist)
+            dno, sno = len(dset), len(sset)
+            if verbose >= 1 and dno > sno:
+                print('\nEntNumDocSnts: {} {} {}'.format(self.id, dno, sno))
+                if verbose >= 2:
+                    #for em in self.emlist:  print(em)
+                    eids = dset.difference(sset)
                     print('Diff:')
-                    for eid in eids:  print(self.emlist[self.emdict[eid]])
-                    if verbose >=3:
-                        print(self)
-                        for snt in self.sntlist:
-                            print(snt)
-                            print(snt.offsets)
-                    #exit(0)
+                    for eid in eids:  print(self.get_entity_mention(eid))
         return
 
-    # generate sentences for a document
-    # fmt: 's'-sentence, 'a'-abstract, 'f'-full-text
-    def generate_document_sentences(self, tcfg, Doc, task='re', fmt='a'):
-        self.replace_bio_special_tokens(BIO_SPECIAL_CHARS)
-        # for BEL, do not split the sentence
+    def generate_document_sentences(self, tcfg, Doc, task='ner', fmt='a'):
+        """
+        generate sentences for a document
+        :param tcfg:
+        :param Doc: the target sentence class
+        :param fmt: 's'-sentence, 'a'-abstract, 'f'-full-text
+        :return:
+        """
+        if tcfg.repl_spec_char:
+            self.replace_bio_special_tokens(BIO_SPECIAL_CHARS)
+        # split into sentences
         lines = split_bio_sentences(fmt, self.text)
-        # convert to class instances
+        # make sentences
         for i, line in enumerate(lines):
-            dline = tokenize_ner_bio_sentence(line)
+            # tokenize the sentence
+            if task == 'ner':  dline = tokenize_ner_bio_sentence(line)
+            else:  dline = tokenize_bio_sentence(line)
+            #
             if tcfg.sent_simplify:
                 dline = simplify_bio_sentence(dline, 'PAREN')
             dline = tokenize_bio_eos(dline)
-            # make a sentence
+            # make the sentence, no tokens
             snt = Doc(id=self.id, no=i, title=self.title, text=dline)
             self.sntlist.append(snt)
-        # align the original document and its sentences for NER
-        self.align_document_with_sentences(verbose=tcfg.verbose)
-        self.transfer_entity_mentions_from_document_to_sentences(verbose=tcfg.verbose)
         return
 
-    # recover entity mentions from a sentence in a document
-    # build coreference pair if corefID is set to True
+    def transfer_document_annotations(self, tcfg):
+        """
+        postprocess document sentences, usu. alignment between doc and sentences, transfer annotations
+        :param tcfg:
+        :return:
+        """
+        # build tokens for all sentences
+        self.build_sntlist_tokens()
+        # todo, add linguistic features here, ...
+        # align the document with its sentences for NER
+        self.align_document_with_sentences(verbose=tcfg.verbose)
+        self.transfer_document_entity_mentions(verbose=tcfg.verbose)
+        return
+
     def recover_entity_mentions(self, tcfg, snt):
-        #self._index_entity_mention()    # reindex entity dict from id->index_no
+        """
+        recover entity mentions from a sentence in a document, refill entity mentions if necessary
+        build coreference pair if corefID is set to True
+        :param tcfg:
+        :param snt:  the target sentence
+        :return: set snt.emdict and snt.text
+        """
         tokens = re.split('[ ]+', snt.text)
         # build entity coreference like ENT1(ENT2)
         if tcfg.ent_coref:
             tokens, coref_pair = bio_coref_build(tokens)
             for emid1, emid2 in coref_pair:
                 self.crfdict[emid1].append(emid2)
-                self.emlist[self.emdict[emid2]].visible = False # disable visible if it is a coreferent
+                self.get_entity_mention(emid2).visible = False # disable visible if it is a coreferent
         # build entity mention list for the line
         # entity mention refilling for trigger word and entity in GE09 task
         ntokens = []    # new tokens refilled
@@ -641,7 +692,7 @@ class ieDoc(object):
                         ntokens.append(token)
                     snt.append_entity_mention(em)
                     for cid in self.crfdict[emid]:
-                        em = self.emlist[self.emdict[cid]].__copy__(lineno=snt.no, hsno=tlen, heno=tlen+1)
+                        em = self.get_entity_mention(cid).__copy__(lineno=snt.no, hsno=tlen, heno=tlen+1)
                         snt.append_entity_mention(em)
                     continue
                 # elif verbose:   # a mismatched entity placeholder
@@ -651,25 +702,23 @@ class ieDoc(object):
         snt.text = ' '.join(ntokens)
         return
 
-
     def match_gold_pred_instances(self):
         match_gold_pred_entity_mentions(self)
-        return
 
     def collect_ner_confusion_matrix(self, confusions, etypedict):
         collect_ner_confusion_matrix(self, confusions, etypedict)
 
-    def collect_instance_statistics(self, counts, typedict):
-        collect_sequence_statistics(self.emlist, counts, typedict)
-
-    # for NER, label schema is unknown at this time
     def generate_sentence_instances(self, tcfg):
-        sl = SequenceLabel(self.id, self.no, self.text, self.emlist, self.offsets)
-        #print(self.offsets)
+        """
+        generate SequenceLabel for the sentence
+        :param tcfg:
+        :return: list of SequenceLabel
+        """
+        sl = SequenceLabel(self.id, self.no, self.emlist, self.tokens)
         return [sl]
 
 # Doc class for segmented sequence labeling
-class sslDoc(ieDoc):
+class sslDoc(nerDoc):
     def __init__(self,
                  id = None,
                  no = None,

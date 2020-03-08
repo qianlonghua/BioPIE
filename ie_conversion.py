@@ -4,7 +4,7 @@ convert the original corpus files to the standard corpus files as follows:
 i-instance, s-sentence, a-abstract, f-full-text
 """
 
-from ie_docset import *
+from ner_utils.ner_docset import *
 
 diseRE = re.compile(r'<category="([^"]*)">([^<]*)</category>')
 #diseRE = re.compile(r'</category>')
@@ -18,27 +18,32 @@ def convert_ncbi_corpus(wdir, cps_file, verbose=0):
     pmid, title, abs, eno, text = None, None, None, 1, ''
     for sline in slines:
         if sline == '':  pmid, title, abs, eno, text = None, None, None, 1, ''
-        elif not pmid:  pmid, _, title = sline.split('|')
-        elif not abs:
+        elif not pmid:  pmid, _, title = sline.split('|')   # title
+        elif not abs:                                       # abstract
             _, _, abs = sline.split('|')
             if abs.endswith('..'):  abs = abs[:-1]
             elif not abs.endswith('.'):  abs = abs + '.'
             tlines.append('\t'.join([pmid, title, abs]))
             text = ' '.join([title, abs])
-        else:
+        else:                                               # entity mention
             _, spos, epos, name, stype, link = sline.split('\t')
             eid = 'T{}'.format(eno)
             eno += 1
-            type = 'DISE|{}'.format(stype)
-            # decompose links like D01234+D23456
-            links = link.split('+')
-            ecnt += len(links) - 1
-            links = links[0].split(':')
-            if len(links) == 1:  link = 'MESHD:{}'.format(link)
+            type = 'DISEASE|{}'.format(stype)
+            # decompose links like D01234|D23456 or D01234+D23456
+            for sep in '+|':
+                mlinks = link.split(sep)
+                # no + in links
+                if sep == '+' and len(mlinks) == 1:  continue
+                for i, mlink in enumerate(mlinks):
+                    links = mlink.split(':')
+                    if len(links) == 1:  mlinks[i] = 'MESH:{}'.format(mlink)
+                link = sep.join(mlinks)
+                if sep == '+':  break
             # check entity name
             if verbose and name != text[int(spos):int(epos)]:
-                print('PMID: {}'.format(pmid))
-                print('Annotation: {}\tText: {}'.format(name, text[int(spos):int(epos)]))
+                print('\nPMID: {}'.format(pmid))
+                print('Annotation: {}\tText: {}\n'.format(name, text[int(spos):int(epos)]))
                 name = text[int(spos):int(epos)]
             eline = '\t'.join([pmid, eid, type, spos, epos, name, link])
             elines.append(eline)
@@ -164,7 +169,7 @@ def convert_bc2gm_corpus(wdir, cps_file, verbose=0):
         words = sline.split()
         text = sline[len(words[0]) + 1:]
         doc = DocumentIE(id=words[0], text=text)
-        docset.append_doc(did=words[0], doc=doc)
+        docset.append_doc(doc=doc)
         tlines.append('\t'.join([words[0], text]))
     file_list2line(tlines, tfilename, verbose=verbose)
     # read entities
@@ -357,7 +362,7 @@ def convert_s800_corpus(wdir, cps_file, verbose=0):
         sfilename = os.path.join(mypath, file)
         text = file_line2list(sfilename, stripID=False)
         tlines.append('\t'.join([pmid]+[text[0].strip(), text[2].strip()]))
-        docset.append_doc(pmid, DocumentIE(id=pmid, title=text[0], text=text[0].strip()+' '+text[2].strip()))
+        docset.append_doc(DocumentIE(id=pmid, title=text[0], text=text[0].strip()+' '+text[2].strip()))
         #print(text)
     file_list2line(tlines, tfilename, verbose=verbose)
     # read entities

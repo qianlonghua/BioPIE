@@ -5,14 +5,17 @@ EntityMention, RelationMention, EventMention etc.
 
 from ie_utils import *
 
-def get_relation_label(type, stype=None, rvsid=False):
-    rlabel = type if type is not None else 'None'
-    if stype is not None: rlabel += '.' + stype
-    if rvsid: rlabel += '.R'
-    return rlabel
 
-#
 def get_single_ner_label(label_schema='IO', idx=0, etype=None, sno=0, eno=0):
+    """
+    get an individual sequence label for an entity mention
+    :param label_schema: four labeling schema are available, 'IO', 'BIO', 'BIEO', 'SBIEO'
+    :param idx: the curremt token position
+    :param etype: entity type
+    :param sno: starting position
+    :param eno: ending position
+    :return: the target label
+    """
     label = 'O'
     if label_schema == 'IO':
         label = 'I-{}'.format(etype)
@@ -36,36 +39,54 @@ def get_single_ner_label(label_schema='IO', idx=0, etype=None, sno=0, eno=0):
         label = '{}-{}'.format(label, etype)
     return label
 
-# get entity mentions [spos, epos, type] from a sequence of labels
 def get_entity_mentions_from_labels(plabels):
+    """
+    # get entity mentions from labels
+    :param plabels: list of labels
+    :return: list of entity mentions [eno, spos, len, type]
+    """
     ltype, lpos, eno = ['O', -1, 1]  # the last type, position
-    ems = []
-    for j, tag in enumerate(plabels):
+    ems = []    # list of entity mentions
+    for i, tag in enumerate(plabels):
         type = 'O'
-        if tag != 'O':  tag, type = tag.split('-')
-        if (tag in 'SBO' or type != ltype):  # possible mention end
-            if ltype != 'O' and lpos >= 0:   # new entity mention
-                ems.append([eno, lpos, j, ltype])
+        if '-' in tag:  tag, type = tag.split('-')  # sometimes PAD will appear
+        # possible mention end, the current tag is SBO or the previous tag is SE or types are different
+        if (tag in 'SBO' or type != ltype or (i > 0 and plabels[i-1][0] in 'SE')):
+            if ltype != 'O' and lpos >= 0:   # new entity mention with valid type and position
+                ems.append([eno, lpos, i, ltype])
                 eno += 1
-            lpos = j
-        ltype = type
+            lpos = i  # for SB or I with new type, a new entity mention begins
+        ltype = type  # type is continuous for entity mention
     # for the last entity in the sentence
     if ltype != 'O' and lpos >= 0:
         ems.append([eno, lpos, len(plabels), ltype])
     return ems
 
-# match positions between gold and recognized, can be optimized
+
 def match_gold_pred_entity_mentions(inst):
+    """
+    match positions between gold and recognized entity mentions, can be optimized,
+    if matched, set gpno for each other, and emid for remlist
+    :param inst:
+    :return:
+    """
     # clear old gpno (gold/predicted index no)
     for em in inst.emlist:  em.gpno = -1
     for rem in inst.remlist:  rem.gpno = -1
     #
+    emno = 0
     for i, em in enumerate(inst.emlist):
+        if int(em.id[1:]) > emno:  emno = int(em.id[1:])
         for j, rem in enumerate(inst.remlist):
             # positions exactly match
             if em.hsno == rem.hsno and em.heno == rem.heno and rem.gpno < 0:
-                em.gpno, rem.gpno = j, i
+                em.gpno, rem.gpno, rem.id = j, i, em.id
                 break
+    # refresh emids in the remlist
+    for rem in inst.remlist:
+        if rem.gpno < 0:
+            emno += 1
+            rem.id = 'T{}'.format(emno)
     return
 
 # collect confusion matrix for instance or document
@@ -87,37 +108,24 @@ def collect_ner_confusion_matrix(inst, confusions, etypedict):
     return
 
 
-def collect_sequence_statistics(insts, counts, typedict):
-    for inst in insts:
-        collect_instance_statistics(inst, counts, typedict)
-
-
-def collect_instance_statistics(inst, counts, typedict):
-    # gold type & no
-    if inst.type not in typedict:  return
-    gno = typedict[inst.type]
-    counts[gno] += 1
-    return
-
-
 class Entity(object):
     def __init__(self,
                  id=None,
                  type=None,
                  stype=None,
-                 linkdb=None,
-                 linkid=None,
+                 # linkdb=None,
+                 linkids=None,
                  linkname=None
                  ):
         self.id = id
         self.type = type
         self.stype = stype
-        self.linkdb = linkdb
-        self.linkid = linkid
+        #self.linkdb = linkdb
+        self.linkids = linkids
         self.linkname = linkname
 
     def __str__(self):
-        return '{} {} {}:{}{}'.format(self.id, self.type, self.linkdb, self.linkid, self.linkname)
+        return '{} {} {} {}'.format(self.id, self.type, '|'.join(self.linkids), self.linkname)
 
 class EntityMention(object):
     # entity mention class
@@ -129,8 +137,7 @@ class EntityMention(object):
                  eclass = None, # mention class
                  level = None,  # mention level
                  name = None,
-                 linkdb = None,
-                 linkid = None,
+                 linkids = None,   # list of linkids
                  visible = True,   # True for placeholder in the sentence, False to nested/duplicated entities
                  lineno = -1,
                  hsno = -1,     # head start
@@ -146,8 +153,9 @@ class EntityMention(object):
         self.eclass = eclass
         self.level = level
         self.name = name
-        self.linkdb = linkdb
-        self.linkid = linkid
+        # self.linkdb = linkdb
+        self.linkids = ['None'] if not linkids else linkids  # list of linkids
+        self.plinkids = []      # list of predicted linkids
         self.visible = visible
         #
         self.lineno = lineno
@@ -171,7 +179,7 @@ class EntityMention(object):
         #return ' '.join(attrs)
         sname = self.name.replace(' ', '_')
         spos = '{} {}|{}|{}|{}'.format(self.lineno, self.hsno, self.heno, self.esno, self.eeno)
-        return '{}|{} {}|{}|{}|{}|{}|{}|{} {}'.format(self.did, self.id, self.type, self.stype, self.linkdb, self.linkid, self.visible, sname, self.gpno, spos)
+        return '{}|{} {}|{}|{}|{}|{}|{} {}'.format(self.did, self.id, self.type, self.stype, '|'.join(self.linkids), self.visible, sname, self.gpno, spos)
 
     def __lt__(self, other):
         return self.lineno < other.lineno or self.hsno < other.hsno or (self.hsno == other.hsno and self.heno <= other.heno)
@@ -190,59 +198,196 @@ class EntityMention(object):
         words[self.hsno] = '{}{}'.format('{', words[self.hsno])
         words[self.heno - 1] = '{}{}{}'.format(words[self.heno - 1], '}-', self.type[:3])
 
+class Token(object):
+    # class for a token in a sentence
+    def __init__(self,
+                 no = -1,
+                 text = '',
+                 offsets = None,
+                 POS = '',
+                 chunk = '',
+                 dep = '',
+                 label = 'O'    # default label
+                 ):
+        self.no = no
+        self.text = text
+        self.POS = POS
+        self.chunk = chunk
+        self.dep = dep
+        # other features
+        self.label = label
+        self.plabel = 'O'           # predicted label
+        self.offsets = offsets if offsets else [-1, -1]      # token --> char positions in the doc text
+        self.boffsets = [-1, -1]    # token --> word-piece positions in the bert sequence
+
+    def __str__(self):
+        return '{}|{}|{}-{}|{}-{}'.format(self.no, self.text, self.offsets[0], self.offsets[1],
+                                          self.boffsets[0], self.boffsets[1])
+    def __copy__(self):
+        token = Token()
+        for att in self.__dict__.keys(): token.__dict__[att] = self.__dict__[att]
+        return token
+
+class Tokens(object):
+    def __init__(self, words):
+        self.tokens = [Token(no=i, text=word) for i, word in enumerate(words)]
+
+    def __len__(self):  return len(self.tokens)
+
+    def __getitem__(self, idx):  return self.tokens[idx]
+
+    def __str__(self):  return '\n'.join([t.__str__() for t in self.tokens])
+
+    def __copy__(self):
+        tokens = Tokens([])
+        tokens.tokens = [token.__copy__() for token in self.tokens]
+        return tokens
+
+    @property
+    def words(self):  return [t.text for t in self.tokens]
+
+    @words.setter
+    def words(self, words):
+        for i, word in enumerate(words):
+            self.tokens[i].text = word
+
+    @property
+    def POSes(self):  return [t.POS for t in self.tokens]
+
+    @POSes.setter
+    def POSes(self, POSes):
+        for i, POS in enumerate(POSes):
+            self.tokens[i].POS = POS
+
+    @property
+    def chunks(self):  return [t.chunk for t in self.tokens]
+
+    @chunks.setter
+    def chunks(self, chunks):
+        for i, chunk in enumerate(chunks):
+            self.tokens[i].chunk = chunk
+
+    @property
+    def offsets(self):  return [t.offsets for t in self.tokens]
+
+    @property
+    def labels(self):  return [t.label for t in self.tokens]
+
+    @property
+    def plabels(self):  return [t.plabel for t in self.tokens]
+
+    @plabels.setter
+    def plabels(self, plabels):  # update predicted labels for Tokens
+        for i in range(min(len(plabels), len(self.plabels))):
+            self.tokens[i].plabel = plabels[i]
+
+    @property
+    def boffsets(self):  return [t.boffsets for t in self.tokens]
+
+    def insert(self, index, word):  # disregard other fields
+        self.tokens.insert(index, Token(text=word))
+
+    def convert_case_num(self, tcfg):    #
+        for i, token in enumerate(self.tokens):
+            text = None
+            if is_float(token.text):  text = '[NUM]'
+            elif not (tcfg.case_sensitive or token.text[:4] in tcfg.bld_ent_types):
+                text = token.text.lower()
+            if text:  self.tokens[i].text = text
+        return
+
+    def blind_entity_mention_placeholders(self, bld_ent_mode=0):
+        """
+        blind the entity token text in the tokens
+        :param bld_ent_mode:
+        :return:
+        """
+        edict = {}
+        for i, word in enumerate(self.words):
+            etype, emid = is_bio_entity(word)
+            if not emid: continue  # not an entity mention
+            # increase entity sequence no like GENE_1, CHEM_1, DISE_1
+            if bld_ent_mode == 0:  # 0-entity type, 1-type_seq, 2-entity id
+                self.tokens[i].text = etype
+            elif bld_ent_mode == 1:
+                if etype not in edict:  edict[etype] = 1
+                eno = edict[etype]
+                edict[etype] += 1
+                self.tokens[i].text = '{}_{}'.format(etype, eno)
+            #if ENT_BRACKET_ID: words[i] = '[' + words[i] + ']'
+        return
 
 # class for sequence labeling
 class SequenceLabel(object):
     def __init__(self,
                  id = None,
                  no = None,
-                 text = '',
                  emlist=None,
-                 offsets = None
+                 tokens = None      # text and offsets are ready
                  ):
         self.id = id
         self.no = no
-        self.text = text
         self.emlist = emlist
         self.remlist = []
         #
-        self.words = []
-        self.offsets = offsets
-        self.labels = []
-        self.bwords = []    # for BERT
-        self.boffsets = []  # for BERT
+        self.tokens = tokens
+        self.btokens = Tokens([])
 
     def __str__(self):
         sidtext = '\nID: {}-{}\nTEXT: {}'.format(self.id, self.no, self.text)
         swords = '' if not self.words else '\nWORDS: {}'.format(' '.join(self.words))
-        #soffsets = '' if not self.offsets else '\nOFFSETS: {}'.format(' '.join(self.offsets))
-        sbwords = '' if not self.bwords else '\nbWORDS: {}'.format(' '.join(self.bwords))
+        sbwords = '' if not self.btokens.words else '\nbWORDS: {}'.format(' '.join(self.btokens.words))
         slabels = '' if not self.labels else '\nLABELS: {}'.format(' '.join(self.labels))
+        sblabels = '' if not self.blabels else '\nbLABELS: {}'.format(' '.join(self.blabels))
         elist = '\n'.join(['{}'.format(em) for em in self.emlist])
         selist = '\nGOLD ENTITIES:\n{}'.format(elist) if len(elist) > 0 else ''
         relist = '\n'.join(['{}'.format(em) for em in self.remlist])
         srelist = '\nRECOGNIZED ENTITIES:\n{}'.format(relist) if len(relist) > 0 else ''
-        return '{}{}{}{}{}{}'.format(sidtext, swords, sbwords, slabels, selist, srelist)
+        return '{}{}{}{}{}{}{}'.format(sidtext, swords, sbwords, slabels, sblabels, selist, srelist)
 
-    # generate bert sequence of word pieces like [CLS] ... [SEP]
-    # align words to word pieces via boffsets
+    @property
+    def text(self):  return ' '.join(self.words)
+
+    @property
+    def words(self): return self.tokens.words
+
+    @property
+    def offsets(self): return self.tokens.offsets
+
+    @property
+    def boffsets(self): return self.tokens.boffsets
+
+    @property
+    def labels(self): return self.tokens.labels
+
+    @property
+    def blabels(self): return self.btokens.labels
+
+    def get_tokens(self, bertID=False):  return (self.btokens if bertID else self.tokens)
+
     def generate_wordpiece_bert_sequence(self, tokenizer):
-        words = self.text.split()  # case-insensitive ?
-        bwords = tokenizer.tokenize(self.text)  # automatically to lowercase
+        """
+        generate bert sequence of word pieces like [CLS] ... [SEP] in btokens
+        align words to word pieces via boffsets
+        :param tokenizer:
+        :return:
+        """
+        words = self.tokens.words  # case-insensitive ?
+        bwords = tokenizer.tokenize(' '.join(words))  # word pieces
+        self.btokens = Tokens(bwords)
+        #
         j, li, plen = 0, 1, 0  # first position is 1 [CLS]
-        boffsets = []
         for i in range(1, len(bwords) - 1):  # exclude [CLS] and [SEP]
             pieceID = bwords[i].startswith('##')  # word piece id
             blen = len(bwords[i][2:] if pieceID else bwords[i])
-            if len(words[j]) != blen:
+            if len(words[j]) != blen:   # multiple word pieces
                 plen += blen
                 if len(words[j]) == plen:  # a word is complete
-                    boffsets.append([li, i + 1])
+                    self.tokens[j].boffsets = [li, i + 1]
                     j, li, plen = j + 1, i + 1, 0
             else:  # a single word matches
-                boffsets.append([i, i + 1])
+                self.tokens[j].boffsets = [i, i + 1]
                 j, li = j + 1, i + 1
-        self.words, self.bwords, self.boffsets = words, bwords, boffsets
         return
 
     # modify esno, eeno in terms of bert sequence
@@ -252,51 +397,48 @@ class SequenceLabel(object):
                 print(self)
                 print(em)
                 for i, pair in enumerate(self.boffsets):
-                    print(i, self.words[i], pair, self.bwords[pair[0]:pair[1]])
+                    print(i, self.words[i], pair, self.words[pair[0]:pair[1]])
             em.esno = self.boffsets[em.hsno][0]    # starting location
             em.eeno = self.boffsets[em.heno-1][1]  # ending location
         return
 
     # prepare instance features and labels
-    def generate_instance_features(self, tcfg, Doc):
+    def generate_instance_feature_label(self, tcfg, Doc):
         if tcfg.bertID:
-            # set words, bwords and boffsets
+            # set tokens.boffsets and btokens
             self.generate_wordpiece_bert_sequence(tcfg.tokenizer)
             # set esno, eeno as the start and end positions in the bert sequence
             self.locate_entity_mention_in_bert_sequence(self.emlist)
         else:
-            # make word sequence
-            self.generate_word_sequence()
+            # make word sequence for non-BERT model
+            self.generate_word_sequence(tcfg)
         # set labels according to entity positions in the word/bert sequence
-        self.labels = self.generate_sequence_labels(self.emlist,tcfg.bertID, Doc.elabel_schema)
+        self.generate_sequence_labels(self.emlist,tcfg.bertID, Doc.elabel_schema)
         return
 
-    def generate_word_sequence(self, case_sensitive=False):
-        text = self.text.lower() if not case_sensitive else self.text
-        self.words = text.split(' ')
-        for i, word in enumerate(self.words):
-            if is_float(word):  self.words[i] = '[NUM]'
-        return
+    def generate_word_sequence(self, tcfg):
+        self.tokens.convert_case_num(tcfg)
 
     def generate_sequence_labels(self, emlist, bertID=False, schema='IO'):
-        words = self.bwords if bertID else self.words
-        labels = ['O'] * len(words)
         for em in emlist:
             sno = em.esno if bertID else em.hsno
             eno = em.eeno if bertID else em.heno
             for i in range(sno, eno):
-                labels[i] = get_single_ner_label(schema, idx=i, etype=em.type, sno=sno, eno=eno)
-        return labels
+                label = get_single_ner_label(schema, idx=i, etype=em.type, sno=sno, eno=eno)
+                self.get_tokens(bertID)[i].label = label
+        return
 
-    def output_instance_candidate(self, bertID=False):
-        return [(self.bwords if bertID else self.words), self.labels]
+    def get_instance_feature_label(self, tcfg):
+        bertID = tcfg.bertID
+        return [self.get_tokens(bertID).words, self.get_tokens(bertID).labels]
 
-    def recognize_entity_mentions_from_labels(self, plabels, lineno=0, bertID=False):
+    def recognize_entity_mentions_from_labels(self, lineno=0, bertID=False):
         # clear old entity mentions
         for em in self.emlist:   em.gpno = -1  # gold-predicted entry no
         self.remlist = []
         #
-        words = self.bwords if bertID else self.words
+        words = self.get_tokens(bertID).words
+        plabels = self.get_tokens(bertID).plabels
         ems = get_entity_mentions_from_labels(plabels)
         for eno, spos, epos, type in ems:
             emid = 'T{}'.format(eno)
@@ -308,10 +450,14 @@ class SequenceLabel(object):
             self.remlist.append(em)
         return
 
-    # esno, eeno --> hsno, heno, exactly match the starting and ending positions
     def convert_bert_entity_mention_positions(self):
+        """
+        exactly match the starting and ending positions
+        :return: esno, eeno --> hsno, heno
+        """
         errID = False
         for rem in self.remlist:
+            rem.visible = True
             for i, boffset in enumerate(self.boffsets):
                 if rem.hsno < 0 and boffset[0] == rem.esno:
                     rem.hsno = i
@@ -321,15 +467,9 @@ class SequenceLabel(object):
             # there are cases when an entity begins in the middle of a word, or ends in the middle of a word.
             if not (rem.hsno >= 0 and rem.heno >= 0):
                 rem.hsno = rem.heno = -1
+                rem.visible = False
                 errID = True
-                # print(self)
-                # for i, word in enumerate(self.words):  print(self.boffsets[i], word)
-                # print(rem)
-        if not errID:  return
-        # print(self)
-        # for rem in self.remlist:
-        #     if rem.hsno < 0 or rem.heno < 0:
-        #         print(rem)
+        self.remlist = [rem for rem in self.remlist if rem.visible]
         return
 
     # match positions between gold and recognized, can be optimized
@@ -341,7 +481,8 @@ class SequenceLabel(object):
 
     def get_ner_labeled_sentences(self, rstlines, verbose=0):
         if verbose < 2:  return  # valid for verbose>=2
-        gwords, rwords = self.words[:], self.words[:]
+        #gwords, rwords = self.words[:], self.words[:]
+        gwords, rwords = self.words, self.words
         for em in self.emlist:
             em.mark_sequence_entity_mentions(gwords)
         for rem in self.remlist:
@@ -350,18 +491,6 @@ class SequenceLabel(object):
             if verbose >= 3 or gwords != rwords:  # 2-erroneous instances, 3-all instances
                 rstlines.extend(['{}-{}'.format(self.id, self.no), ' '.join(gwords), ' '.join(rwords)])
         return
-
-    def collect_instance_statistics(self, counts, typedict):
-        collect_sequence_statistics(self.emlist, counts, typedict)
-        #collect_entity_mention_statistics(self, counts, typedict)
-
-def collect_entity_mention_statistics(inst, counts, typedict):
-    # collect true positives
-    for em in inst.emlist:
-        if em.type not in typedict:  continue
-        gno = typedict[em.type]
-        counts[gno] += 1
-    return
 
 # usd for segmented NER
 class segSequenceLabel(SequenceLabel):
@@ -385,8 +514,8 @@ class segSequenceLabel(SequenceLabel):
         return '{}{}{}'.format(tsl, sslist, sslabels)
 
     # prepare instance features and labels
-    def generate_instance_features(self, tcfg, Doc):
-        super(segSequenceLabel,self).generate_instance_features(tcfg, Doc)
+    def generate_instance_feature_label(self, tcfg, Doc):
+        super(segSequenceLabel,self).generate_instance_feature_label(tcfg, Doc)
         if tcfg.bertID:
             self.locate_entity_mention_in_bert_sequence(self.smlist)
         self.slabels = self.generate_sequence_labels(self.smlist, tcfg.bertID, Doc.slabel_schema)
@@ -394,145 +523,6 @@ class segSequenceLabel(SequenceLabel):
 
     def output_instance_candidate(self, bertID=False):
         return [(self.bwords if bertID else self.words), self.labels, self.slabels]
-
-
-# relational facts
-class Relation(object):
-    def __init__(self,
-                 id=None,
-                 type=None,
-                 stype=None,
-                 name=None,
-                 sname=None,
-                 eid1=None,
-                 eid2=None
-                 ):
-        self.id = id
-        self.type = type
-        self.stype = stype
-        self.name = name
-        self.sname = sname
-        self.eid1 = eid1
-        self.eid2 = eid2
-
-    def __str__(self):
-        return '{} {}|{}|{}|{}'.format(self.id, self.type, self.stype, self.eid1, self.eid2)
-
-
-# class for relation extraction
-class RelationMention(object):
-    def __init__(self,
-                 id = None,
-                 type = None,
-                 stype = None,
-                 rvsid = False, # reverse or not
-                 name = None,   # type name
-                 sname = None,  # subtype name
-                 emid1 = None,
-                 emid2 = None,
-                 text = '',
-             ):
-        self.id = id
-        self.type = type
-        self.stype = stype
-        self.rvsid = rvsid
-        self.name = name
-        self.sname = sname
-
-        self.emid1 = emid1
-        self.emid2 = emid2        # None if unary relations
-        self.text = text          # in line
-        self.words = []
-        self.bwords = []
-
-        self.ptype = None         # predicted type
-        self.pstype = None        # predicted stype
-        self.prvsid = False       # predicted reverse id
-
-        self.visited = False      # visited mark
-
-    def set_predicted_type(self, ptype=None, pstype=None, prvsid=None):
-        self.ptype = ptype
-        self.pstype = pstype
-        self.prvsid = prvsid
-
-    def __copy__(self, text=None):
-        rm = RelationMention()
-        for att in self.__dict__.keys(): rm.__dict__[att] = self.__dict__[att]
-        if text is not None: rm.text = text
-        return rm
-
-    def __str__(self):
-        srel = '{}|{}|{}|{}|{}|{}|{}'.format(self.type, self.stype, self.rvsid, self.name, self.sname, self.ptype, self.prvsid)
-        return '{} {}|{} {} "{}"'.format(self.id, self.emid1, self.emid2, srel, self.text)
-
-    # for relation extraction
-    def generate_instance_features(self, tcfg, Doc):
-        self.words = self.text.split()
-        if tcfg.bertID and tcfg.tokenizer:
-            self.bwords = tcfg.tokenizer.tokenize(self.text)
-            #self.bwords = ['[unused1]'] + tcfg.tokenizer.tokenize(self.text)
-
-    # return word list and type name
-    def output_instance_candidate(self, bertID=False):
-        label = get_relation_label(type=self.type, rvsid=self.rvsid)
-        words = self.bwords if bertID else self.words
-        return [words, label]
-
-    # return a sentence with two entity placeholders replaced by types
-    def blind_relation_entity_mentions(self, em1, em2=None, bertID=False):
-        words = self.text.split(' ')
-        if not bertID:
-            words[em1.hsno] = '# {} #'.format(em1.type[:4])
-            if em2:  words[em2.hsno] = '@ {} @'.format(em2.type[:4])
-        else:
-            words[em1.hsno] = '[{}]'.format(em1.type[:4])
-            if em2:  words[em2.hsno] = '[{}]'.format(em2.type[:4])
-        self.text = ' '.join(words)
-        return
-
-    def get_re_labeled_instance(self, rstlines, verbose=0):
-        gtype = get_relation_label(type=self.type, rvsid=self.rvsid)  # gold type
-        ptype = get_relation_label(type=self.ptype, rvsid=self.prvsid)  # predicted type
-        if gtype != 'None' or ptype != 'None':
-            if verbose >=3 or gtype != ptype:
-                rstlines.append('{}-->{}\t{}\t{}'.format(gtype, ptype, self.text, self.id))
-        return
-
-    # insert #...# and @...@ around entity 1 and entity 2
-    def insert_entity_mentions_delimiters(self, em1, em2=None, recover=False):
-        words = self.text.split(' ')
-        em1.set_around_delimiters(words, sep='#', recover=recover)
-        if em2: # binary relations
-            em2.set_around_delimiters(words, sep='@', recover=recover)
-        self.text = ' '.join(words)
-        return
-
-    # collect confusion matrices from relation mention
-    # gold: gold relation mention or not
-    def collect_re_confusion_matrices(self, docset, rconfusions, confusions, gold=False):
-        # gold & predicted type
-        gtype = get_relation_label(type=self.type, rvsid=self.rvsid)    # gold type
-        ptype = get_relation_label(type=self.ptype, rvsid=self.prvsid)  # predicted type
-        # gold relation mention or false positive
-        if gold or gtype == 'None':
-            gno = docset.rlabeldict[gtype]
-            pno = docset.rlabeldict[ptype]
-            rconfusions[gno][pno] += 1
-        # calculate confusion matrix without reverse relations
-        if docset.rvsID:
-            gtype = get_relation_label(type=self.type, rvsid=False)
-            ptype = get_relation_label(type=self.ptype, rvsid=False)
-            if gold or gtype == 'None':
-                if gtype == 'None':  gtype = 'Avg.'  # None in labels <--> Avg. in types
-                if ptype == 'None':  ptype = 'Avg.'
-                gno = docset.rtypedict[gtype]
-                pno = docset.rtypedict[ptype]
-                confusions[gno][pno] += 1
-        return
-
-    def collect_instance_statistics(self, counts, typedict):
-        collect_instance_statistics(self, counts, typedict)
 
 
 class QuestionAnswer(object):
