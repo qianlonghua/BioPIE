@@ -24,20 +24,20 @@ There are two kinds of performance, instance-level and abstract-level.
 
 ### usage and example
 ```shell
-    options = OptionConfig(model_name='LstmCrf', epochs=15, batch_size=32,
-                           valid_ratio=0.1, verbose=3,
-                           fold_num=10, fold_num_run=1,
-                           bld_ent_types=elist, diff_ent_type=0, mark_ent_pair=1,
-                           case_sensitive=0, test_ent_pred=0)
-    (tcfg, _) = options.parse_args()
+options = OptionConfig(model_name='LstmCrf', epochs=15, batch_size=32,
+                       valid_ratio=0.1, verbose=3,
+                       fold_num=10, fold_num_run=1,
+                       bld_ent_types=elist, diff_ent_type=0, mark_ent_pair=1,
+                       case_sensitive=0, test_ent_pred=0)
+(tcfg, _) = options.parse_args()
 ```
 OptionConfig can pass some option parser during the training procedure: 
 model_name, epochs and batch_size are model, epoches and batch size used in training; 
 valid_ratio is the percentage used when randomly split data as validation set;
 fold_num us the number of folder used in cross validation.
 ```shell
-    main(op='r', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
-    main(op='tv', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
+main(op='r', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
+main(op='tv', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
 ```
 op is the operation used in the function.
 
