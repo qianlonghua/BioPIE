@@ -465,7 +465,7 @@ class nerDocSet(object):
         # get the examples
         insts, exams = self.insts, []
         if tcfg.verbose > 0:
-            print('Generating {} candidates ...'.format(self.get_task_fullname()))
+            print('\nGenerating {} {} data ...'.format(self.get_task_fullname(), self.id))
             insts = tqdm(insts)
         for inst in insts:
             exams.append(inst.get_instance_feature_label(tcfg))
@@ -574,6 +574,7 @@ class nerDocSet(object):
         return aprf
 
     # verbose: 0-only consile overall performance, 1-confusion/PRF, 2-erroneous instances, 3-all instances
+    # verbose is always set to 0 for validation/testing during training
     def output_docset_performance(self, performance, level='inst', mdlfile=None, logfile=None, rstfile=None, verbose=0):
         confusions, prfs, rstlines = performance
         olines = []
@@ -584,22 +585,21 @@ class nerDocSet(object):
             # output confusion matrix
             olines.append('Confusion matrix for entity types:')
             olines.extend(output_confusion_matrix(cm=confusions, ldict=self.etypedict))
-            # output P/R/F
+            # output P/R/F performance
             olines.append('\nPRF performance for entity types:')
-            #print(sorted(self.etypedict.items(), key=lambda d: d[1]))
             olines.extend(output_classification_prfs(prfs, self.etypedict, verbose=verbose))
         # output result files
         if verbose >= 2 and level=='inst' and rstfile:
             file_list2line(rstlines, rstfile)
-        #
+        # save performance to log file
         if logfile is not None:
             flog = open(logfile, 'a', encoding='utf8')
             print('\n'.join(olines), file=flog)
             flog.close()
-        else:  print('\n'.join(olines))
+        elif verbose > 0:
+            print('\n'.join(olines))
         # always output the overall performance to the console
-        if verbose:
-            print('{:>6}({}): {}'.format(self.id, level, format_row_prf(prfs[-1])))
+        print('{:>6}({}): {}'.format(self.id, level, format_row_prf(prfs[-1])))
         return prfs[-1]
 
     def output_docset_predicted_results(self, tcfg, rstfile=None, level='docu'):

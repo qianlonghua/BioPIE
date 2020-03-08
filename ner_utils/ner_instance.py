@@ -334,7 +334,7 @@ class SequenceLabel(object):
         self.btokens = Tokens([])
 
     def __str__(self):
-        sidtext = '\nID: {}-{}\nTEXT: {}'.format(self.id, self.no, self.text)
+        sidtext = 'ID: {}-{}\nTEXT: {}'.format(self.id, self.no, self.text)
         swords = '' if not self.words else '\nWORDS: {}'.format(' '.join(self.words))
         sbwords = '' if not self.btokens.words else '\nbWORDS: {}'.format(' '.join(self.btokens.words))
         slabels = '' if not self.labels else '\nLABELS: {}'.format(' '.join(self.labels))

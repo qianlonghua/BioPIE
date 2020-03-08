@@ -288,20 +288,19 @@ class reDocSet(nerDocSet):
             if self.rvsID:
                 olines.append('\nConfusion matrix for non-reverse relation types:')
                 olines.extend(output_confusion_matrix(cm=confusions, ldict=self.rtypedict))
-            # output P/R/F1
+            # output P/R/F1 performance
             olines.append('\nPRF performance for non-reverse relation types:')
-            #print(sorted(self.rtypedict.items(), key=lambda d: d[1]))
             olines.extend(output_classification_prfs(prfs, self.rtypedict, verbose))
         # output result lines
         if verbose >= 2 and level == 'inst' and rstfile:
-            #rlines = ['{}-->{}\t{}\t{}'.format(r[0], r[1], r[3], r[2]) for r in sorted(rstlines)]
             file_list2line(rstlines, rstfile)
-        #
+        # save performance to log file
         if logfile is not None:
             flog = open(logfile, 'a', encoding='utf8')
             print('\n'.join(olines), file=flog)
             flog.close()
-        else:  print('\n'.join(olines))
+        elif verbose > 0:
+            print('\n'.join(olines))
         # always return the overall performance
         print('{:>6}({}): {}'.format(self.id, level, format_row_prf(prfs[-1])))
         return prfs[-1]

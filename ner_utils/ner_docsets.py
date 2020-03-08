@@ -251,8 +251,8 @@ class nerDocSets(object):
         # cross-validation if only one file exists and operations are training/validation
         cvID = (len(self.cpsfiles) == 1 and 't' in op and 'v' in op)
         if epo == 0 or epo > tcfg.epochs:  epo = tcfg.epochs
-        #
-        if tcfg.bertID: tcfg.batch_size = 2 if 'Crf' in tcfg.model_name else 4    # should be 2 for CHEMD BertCrf, otherwise 4
+        # set batch_size to 4 for Bert,2 for BertCrf
+        if tcfg.bertID: tcfg.batch_size = 2 if 'Crf' in tcfg.model_name else 4
 
         # split into train/dev/test docsets
         if cvID:
@@ -288,37 +288,37 @@ class nerDocSets(object):
             if tcfg.bert_model is None:
                 tcfg.bert_model = load_bert_model(tcfg.bert_path, tcfg.verbose)
             self.model = create_bert_classification_model('token', tcfg)
-        else:
+        else:   # Lstm
             self.model = build_lstm_model(level='token', cfg=tcfg, EMBED_MATRIX=self.embed_matrix)
         if tcfg.verbose:  self.model.summary()
         return
 
     # train the model using datasets[0].data, evaluate on the datasets[1,2].data
     def train_eval_model(self, cfg, fold):
-        model_file, vprfs, tprfs = None, [], []
+        model_file = None
+        vtprfs = [[], []]   # 0-validation, 1-test
         for i in range(cfg.epochs):
-            print('\nTraining {} Epoch {}/{}'.format(cfg.model_name, i + 1, cfg.epochs))
+            print('\nTraining epoch {}/{}'.format(i + 1, cfg.epochs))
             model_file = self.get_model_filename(cfg.model_name, epo=i+1, fold=fold)
             # training
             doc_D = data_generator(self.datasets[0].data, cfg.max_seq_len, cfg.batch_size, num_classes=cfg.num_classes)
             self.model.fit_generator(doc_D.__iter__(shuffleID=True), steps_per_epoch=len(doc_D), epochs=1, verbose=True)
             self.model.save_weights(model_file)
             # evaluate on validation/test
-            for j in range(1, 3):
+            for j in range(1, 3):   # 1-validation, 2-test
                 if not self.datasets[j].data:  continue
                 doc_D = data_generator(self.datasets[j].data, cfg.max_seq_len, cfg.batch_size, num_classes=cfg.num_classes)
                 pred_cs, _ = predict_on_batch_keras(self.model, doc_D=doc_D, verbose=0)
                 self.datasets[j].assign_docset_predicted_results(pred_nos=pred_cs, bertID=cfg.bertID)
                 aprf = self.datasets[j].calculate_docset_performance(level='inst', mdlfile=model_file, avgmode=cfg.avgmode, verbose=0)
-                if j == 1:  vprfs.append(aprf)  # validation
-                else:  tprfs.append(aprf)     # test
-        # validation/test
+                vtprfs[j-1].append(aprf)
+        # list validation and test performance scores for all epochs
         if cfg.verbose == 0:  return model_file
-        print()
-        for i in range(1,3):
-            if not self.datasets[i].data:  continue
-            for j, prf in enumerate(vprfs if i == 1 else tprfs):
-                print('{:>6}(ep={}): {}'.format('valid' if i == 1 else 'test', j+1, format_row_prf(prf)))
+        for j in range(1,3):
+            if not self.datasets[j].data:  continue
+            print()
+            for ep, prf in enumerate(vtprfs[j-1]):
+                print('{:>6}(ep={}): {}'.format('valid' if j == 1 else 'test', ep+1, format_row_prf(prf)))
         return model_file
 
     def test_with_model(self, tcfg, model_file, docdata):
