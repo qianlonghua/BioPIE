@@ -65,7 +65,7 @@ Initialized options are then parsed into the variable *tcfg*, which is passed to
 Take the NCBI disease corpus as an example.
 
 #### Review
-Invoke the following main() function to review the corpus, which is indicated in '**r**' operation:
+Invoke the following main() function in bio_ie.py to review the corpus, which is indicated in '**r**' operation:
 ```
 main(op='r', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
 ```
