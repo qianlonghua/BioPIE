@@ -6,13 +6,10 @@ For biomedical corpora, there are basically four kinds of annotation levels: ins
 
 #### Instance level
 The annotation unit is an instance, e.g. a sentence annotated with entity labels (CONLL-2003, JNLPBA-2004), or a relation instance with a relation type (SemEval-2010).
-
 #### Sentence level
 The annotation unit is a sentence, annotated with entity mentions with their starting and ending positions for NER, together with relations between any pair of entity mentions for RE.
-
 #### Abstract level
 Similar to sentence-level, in addition that the annotation unit is an abstract with multiple sentences.
-
 #### Full-text level
 Similar to abstract-level, in addition that the annotation unit is a full-text article with multiple paragraphs, with each paragraph consisting of multiple sentences.
 
