@@ -1,5 +1,5 @@
 # BioPIE：Platform for Biomedical Information Extraction
-The repository provides the code for BioPIE, a deep learning research platform designed for biomedical text information extraction. 
+The repository provides the source code for BioPIE, a deep learning research and development platform designed for information extraction in biomedical domain. It can deal with biomedical corpora with different annotation levels in a unified way, train and validate DL models including CNN, LSTM, AttLSTM, LSTMBERT and and predict 
 It includes dataset processing and model training for various information extraction tasks such as named entity recognition, relation extraction and etc.
 
 ### data format
