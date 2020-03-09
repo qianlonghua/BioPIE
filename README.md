@@ -4,16 +4,16 @@ The repository provides the source code for BioPIE, a deep learning (DL)-based r
 ## Corpus format
 For biomedical corpora, there are basically four kinds of annotation levels: instance(CONLL-2003, SemEval-2010, oooops, they are not biomedical-related), sentence(BC2GM, BEL), abstract(NCBI, CPR) and full-text (LINNAEUS). some of them are even mixed with two kinds of annotation levels, such as GE2011, which includes both abstract and full text-level annotations. They can be treated in a unfied way.
 
-### Instance
+### Instance level
 The annotation unit is an instance, e.g. a sentence annotated with entity labels (CONLL-2003, JNLPBA-2004), or a relation instance with a relation type (SemEval-2010).
 
-### Sentence
+### Sentence level
 The annotation unit is a sentence, annotated with entity mentions with their starting and ending positions for NER, together with relations between any pair of entity mentions for RE.
 
-### Abstract
+### Abstract level
 Similar to sentence-level, in addition that the annotation unit is an abstract with multiple sentences.
 
-### Full-text
+### Full-text level
 Similar to abstract-level, in addition that the annotation unit is a full-text article with multiple paragraphs, with each paragraph consisting of multiple sentences.
 
 ## Application steps
@@ -24,6 +24,9 @@ According to your task and corpus, the "Review" process makes a config file, a c
 
 ### train and validate
 Currently, NER and RE are two tasks that can be trained and validated on different-level corpora and various DL models. 
+
+Before training and validation, if necessary, a full article is broken into several paragraphs, and a paragraph is splitted into several sentences. Thereafter sentences are tokenized and transformed to instances, such as sequences with continuous entity labels for NER and relation instances with discrete relation types for RE.
+
 
 For NER, sentences are tokenized and each token is labeled with entity type in a sequence level. 
 Data are trained in token level using Lstm, Lstm Crf and Bert model.
