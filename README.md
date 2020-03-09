@@ -46,10 +46,11 @@ options = OptionConfig(model_name='LstmCrf', epochs=15,
 Initialized options are then parsed into the variable *tcfg*, which is passed to the main() function. You can also add additional options before they are parsed.
 
 *model_name*, *epochs*, *batch_size*, and *valid_ratio*: they are self-evident and used in training. When *valid_ratio* is set to 0, no validation will be performed; 
+*verbose*: if 0, no prompt will be displayed, otherwise prompting messages at different levels will be displayed and saved;
+*bld_ent_types*: means the list of entity types to be blinded for RE;
+*diff_ent_type*: means whether a relation instance must involve two entity mentions with different types;
+*mark_ent_pair*: means how two entity mentions are marked out in RE with 0-no marking, 1-marking with # and @ for 1st and 2nd entity mentions, and 3-marking with entity types. 
 
-valid_ratio is the percentage used when randomly split data as validation set;
-
-fold_num us the number of folder used in cross validation.
 ```shell
 main(op='r', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
 main(op='tv', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
