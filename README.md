@@ -43,9 +43,9 @@ options = OptionConfig(model_name='LstmCrf', epochs=15,
                        )
 (tcfg, _) = options.parse_args()
 ```
-Initialized options are packed into the variable *tcfg*, which is passed to the main() function.
-OptionConfig can pass some option parser during the training procedure: 
-model_name, epochs and batch_size are model, epoches and batch size used in training; 
+Initialized options are then parsed into the variable *tcfg*, which is passed to the main() function. You can also add additional options before they are parsed.
+
+*model_name*, *epochs*, *batch_size*, and *valid_ratio*: they are self-evident and used in training. When *valid_ratio* is set to 0, no validation will be performed; 
 
 valid_ratio is the percentage used when randomly split data as validation set;
 
