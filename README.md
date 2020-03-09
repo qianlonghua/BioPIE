@@ -17,23 +17,20 @@ Similar to sentence-level, in addition that the annotation unit is an abstract w
 Similar to abstract-level, in addition that the annotation unit is a full-text article with multiple paragraphs, with each paragraph consisting of multiple sentences.
 
 ## Application steps
-For a specific biomedical corpus, several steps need to be followed in order to apply the platform to your task. First, the corpus is reviewed according to its annotation level and the performed IE task, then you can train and validate your specified model, finally the derived model can be applied to predict entity mentions or relation mentions from a biomedical literature.
+For a specific biomedical corpus, several steps need to be followed in order to apply the platform to your task. First, the corpus is reviewed according to its annotation level and the IE task to be performed, then you can train and validate your  model, finally the derived model can be applied to predict entity mentions or relation mentions from a biomedical literature.
 
 ### Review a corpus
 According to your task and corpus, the "Review" process makes a config file, a corpus statistic file, and a word dict file. The last one is used for non-BERT models.
 
-### train and validate
+### Train and Validate
 Currently, NER and RE are two tasks that can be trained and validated on different-level corpora and various DL models. 
 
-Before training and validation, if necessary, a full article is broken into several paragraphs, and a paragraph is splitted into several sentences. Thereafter sentences are tokenized and transformed to instances, such as sequences with continuous entity labels for NER and relation instances with discrete relation types for RE.
+Before training and validation, if necessary, a full article is broken into several paragraphs, and a paragraph is splitted into several sentences. Thereafter sentences are tokenized and transformed to instances, such as sequences with continuous entity labels for NER and relation instances with discrete relation types for RE. Specially for RE, the entity mentions in a sentence can be blinded to placeholders and two involved entity mentions can also be marked out in different ways.
 
+For NER, Lstm, LstmCrf, Bert, and BertCrf models can be used.
+For RE, Cnn, Lstm, AttLstm, and Bert models can be used.
 
-For NER, sentences are tokenized and each token is labeled with entity type in a sequence level. 
-Data are trained in token level using Lstm, Lstm Crf and Bert model.
-
-For RE, relation pair are blinded and each instance are labeled according to relation type. 
-Data are trained in sentence level using Cnn, Lstm, Attention Lstm and Bert model.
-
+Currently, 
 Best model are chosen according to performance on validation set. Also, early stopping can be applied to improve time efficiency.
 
 ### prediction
