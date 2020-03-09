@@ -63,22 +63,20 @@ Initialized options are then parsed into the variable *tcfg*, which is passed to
 
 ### NER
 Take the NCBI disease corpus as an example.
+
 #### Review
-Invoke the following main function to review the corpus which is indicated in 'r' operation:
+Invoke the following main() function to review the corpus, which is indicated in '**r**' operation:
 ```
 main(op='r', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
 ```
-It will make a file "ner_cfg.json" in the work directory "NCBI". The corpus has three text and entity files, and it is annotated at abstract level.
+It will make a file "ner_cfg.json" in the work directory "NCBI". The corpus has three text file (*train.txt*, *dev.txt*, *test.txt*) and entity files (*train.ent*, *dev.ent*, *test.ent*), and all the three files are annotated at abstract level (**i**nstance, **a**bstract, **s**entence and **f**ull-text).
 
-### Train and Validate
+#### Train and Validate
+The operation of '**tv**' is invoked to train and validate.
 ```
 main(op='tv', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
 ```
-op is the operation used in the function.
-
-r: review operation can review the corpus files, prepare json config file and combine word vocabularies.
-
-tv: train and validate operation can train on the the corpora except the last file and evaluate on the last one.
+The NER model is trained on the files except the last one and evaluated on the last one.
 
 task is the biomedical information extraction task: ner or re.
 
