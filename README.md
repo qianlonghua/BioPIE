@@ -4,20 +4,31 @@ The repository provides the source code for BioPIE, a deep learning (DL)-based r
 ## Corpus format
 For biomedical corpora, there are basically four kinds of annotation levels: instance(CONLL-2003, SemEval-2010, oooops, they are not biomedical-related), sentence(BC2GM, BEL), abstract(NCBI, CPR) and full-text (LINNAEUS). some of them are even mixed with two kinds of annotation levels, such as GE2011, which includes both abstract and full text-level annotations. They can be treated in a unfied way.
 
+### Instance
+The annotation unit is an instance, e.g. a sentence annotated with entity labels (CONLL-2003, JNLPBA-2004), or a relation instance with a relation type (SemEval-2010).
+
+### Sentence
+The annotation unit is a sentence, annotated with entity mentions with their starting and ending positions for NER, together with relations between any pair of entity mentions for RE.
+
+### Abstract
+Similar to sentence-level, in addition that the annotation unit is an abstract with multiple sentences.
+
+### Full-text
+Similar to abstract-level, in addition that the annotation unit is a full-text article with multiple paragraphs, with each paragraph consisting of multiple sentences.
+
 ## Application steps
-For a specific biomedical corpus, several steps need to be followed in order to apply the platform to your task. First, the corpus is reviewed according to its annotation level and the performed IE task, then you can train and validate your specified model, finally the derived model can be used to predict entity mentions or relation mentions from a biomedical literature.
+For a specific biomedical corpus, several steps need to be followed in order to apply the platform to your task. First, the corpus is reviewed according to its annotation level and the performed IE task, then you can train and validate your specified model, finally the derived model can be applied to predict entity mentions or relation mentions from a biomedical literature.
 
 ### Review a corpus
-task config file, corpus statistic file and word dict file will be saved for further usage.
-
+According to your task and corpus, the "Review" process makes a config file, a corpus statistic file, and a word dict file. The last one is used for non-BERT models.
 
 ### train and validate
-Named entity recognition and relation extraction are two default task that can be trained on different corpus and different models. 
+Currently, NER and RE are two tasks that can be trained and validated on different-level corpora and various DL models. 
 
-For ner task, sentences are tokenized and each token is labeled with entity type in a sequence level. 
+For NER, sentences are tokenized and each token is labeled with entity type in a sequence level. 
 Data are trained in token level using Lstm, Lstm Crf and Bert model.
 
-For re task, relation pair are blinded and each instance are labeled according to relation type. 
+For RE, relation pair are blinded and each instance are labeled according to relation type. 
 Data are trained in sentence level using Cnn, Lstm, Attention Lstm and Bert model.
 
 Best model are chosen according to performance on validation set. Also, early stopping can be applied to improve time efficiency.
