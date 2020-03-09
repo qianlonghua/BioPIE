@@ -55,7 +55,7 @@ Initialized options are then parsed into the variable *tcfg*, which is passed to
 
 *diff_ent_type*: whether a relation instance must involve two entity mentions with different types;
 
-*mark_ent_pair*: how two entity mentions are marked out in RE with 0-no marking, 1-marking with # and @ for 1st and 2nd entity mentions, and 3-marking with entity types. 
+*mark_ent_pair*: how two entity mentions are marked out in RE with 0-no marking, 1-marking with # and @ for 1st and 2nd entity mentions, and 3-marking with entity types; 
 
 *word_vector_path*: the path and filename of the pre-trained word vectors;
 
