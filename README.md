@@ -35,24 +35,43 @@ The derived model can be used to recognize new entity mentions from a biomedical
 ## Usage and Examples
 ### Options
 Training parameters and data processing options are first initialized using the class of OptionConfig as follows:
-```shell
+```
 elist = ('GENE', 'CHEM')
 options = OptionConfig(model_name='LstmCrf', epochs=15, 
                        batch_size=32, valid_ratio=0.1, verbose=3,
                        bld_ent_types=elist, diff_ent_type=0, mark_ent_pair=1,
                        )
 (tcfg, _) = options.parse_args()
+tcfg.word_vector_path = './glove/glove.6B.100d.txt'
+tcfg.bert_path = './bert-model/biobert-pubmed-v1.1'
 ```
 Initialized options are then parsed into the variable *tcfg*, which is passed to the main() function. You can also add additional options before they are parsed.
 
 *model_name*, *epochs*, *batch_size*, and *valid_ratio*: they are self-evident and used in training. When *valid_ratio* is set to 0, no validation will be performed; 
-*verbose*: if 0, no prompt will be displayed, otherwise prompting messages at different levels will be displayed and saved;
-*bld_ent_types*: means the list of entity types to be blinded for RE;
-*diff_ent_type*: means whether a relation instance must involve two entity mentions with different types;
-*mark_ent_pair*: means how two entity mentions are marked out in RE with 0-no marking, 1-marking with # and @ for 1st and 2nd entity mentions, and 3-marking with entity types. 
 
-```shell
+*verbose*: if 0, no prompt will be displayed, otherwise prompting messages at different levels will be displayed and saved;
+
+*bld_ent_types*: the list of entity types to be blinded for RE;
+
+*diff_ent_type*: whether a relation instance must involve two entity mentions with different types;
+
+*mark_ent_pair*: how two entity mentions are marked out in RE with 0-no marking, 1-marking with # and @ for 1st and 2nd entity mentions, and 3-marking with entity types. 
+
+*word_vector_path*: the path and filename of the pre-trained word vectors;
+
+*bert_path*: the path of the pre-train BERT model.
+
+### NER
+Take the NCBI disease corpus as an example.
+#### Review
+Invoke the following main function to review the corpus which is indicated in 'r' operation:
+```
 main(op='r', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
+```
+It will make a file "ner_cfg.json" in the work directory "NCBI". The corpus has three text and entity files, and it is annotated at abstract level.
+
+### Train and Validate
+```
 main(op='tv', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
 ```
 op is the operation used in the function.
