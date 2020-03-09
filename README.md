@@ -76,10 +76,22 @@ The operation of '**tv**' is invoked to train and validate.
 ```
 main(op='tv', task='ner', wdir='NCBI', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
 ```
-The NER model is trained on the files except the last one and evaluated on the last one.
+The NER model is trained on the first two files and evaluated on the last one.
 
-task is the biomedical information extraction task: ner or re.
+### RE
+Take the BioCreative VI CPR corpus as an example.
 
-cpsfiles is the corpus file used in the operation.
+#### Review
+```
+main(op='r', task='re', wdir='CPR', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
+```
+It will make a file "re_cfg.json" in the work directory "CPR". In addition to three text file and three entity files, the corpus has three relation files (*train.rel*, *dev.rel*, *test.rel*).
 
-cpsfmts is the corpus formats: i for instance level; a for abstract level; s for sentence level; f for full text level.
+#### Train and Validate
+```
+main(op='tv', task='re', wdir='CPR', cpsfiles=('train', 'dev', 'test'), cpsfmts='aaa', tcfg=tcfg)
+```
+Similarly, the RE model is trained on the first two files and evaluated on the last one.
+
+### References
+
