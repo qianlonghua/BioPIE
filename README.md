@@ -9,9 +9,9 @@ The annotation unit is an instance, e.g. a sentence annotated with entity labels
 #### Sentence level
 The annotation unit is a sentence, annotated with entity mentions with their starting and ending positions for NER, together with relations between any pair of entity mentions for RE.
 #### Abstract level
-Similar to sentence-level, in addition that the annotation unit is an abstract with multiple sentences.
+Similar to sentence-level, except that the annotation unit is an abstract with multiple sentences.
 #### Full-text level
-Similar to abstract-level, in addition that the annotation unit is a full-text article with multiple paragraphs, with each paragraph consisting of multiple sentences.
+Similar to abstract-level, except that the annotation unit is a full-text article with multiple paragraphs, with each paragraph consisting of multiple sentences.
 
 ## Application steps
 For a specific biomedical corpus, several steps need to be followed in order to apply the platform to your task. First, the corpus is reviewed according to its annotation level and the IE task to be performed, then you can train and validate your  model, finally the derived model can be applied to predict entity mentions or relation mentions from a biomedical literature.
@@ -27,10 +27,9 @@ Before training and validation, if necessary, a full article is broken into seve
 For NER, Lstm, LstmCrf, Bert, and BertCrf models can be used.
 For RE, Cnn, Lstm, AttLstm, and Bert models can be used.
 
-Currently, 
-Best model are chosen according to performance on validation set. Also, early stopping can be applied to improve time efficiency.
+Currently, the performance on the test set at the last epoch is used as the final results. Additionally during each training epoch, the performance on the validation and test set are displayed for reference. In order to improve time efficiency, "Best" and "early stoping" strategies in terms of performance on the validation set will be adopted later on.
 
-### prediction
+### Prediction
 The final prediction result is the performance(f1) of the model on test set. 
 There are two kinds of performance, instance-level and abstract-level.
 
