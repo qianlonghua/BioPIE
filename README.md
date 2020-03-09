@@ -2,7 +2,7 @@
 The repository provides the source code for BioPIE, a deep learning (DL)-based research and development platform designed for information extraction, i.e., NER (Named Entity Recognition) and RE (Relation Extraction) in biomedical domain. It can deal with biomedical corpora with different annotation levels in a unified way, train and validate multiple fundamental DL models, such as CNN, LSTM, Att-LSTM, LSTM-CRF, BERT and BERT-CRF etc.
 
 ## Corpus formats
-For biomedical corpora, there are basically four kinds of annotation levels: instance(CONLL-2003, SemEval-2010, oooops, they are not biomedical-related), sentence(BC2GM, BEL), abstract(NCBI, CPR) and full-text (LINNAEUS). some of them are even mixed with two kinds of annotation levels, such as GE2011, which includes both abstract and full text-level annotations. They can be treated in a unfied way.
+For biomedical corpora, there are basically four kinds of annotation levels: instance(CONLL-2003[1], SemEval-2010 task 8[2], which are not biomedical-related), sentence(BC2GM, BEL), abstract(NCBI[3], CPR[4]) and full-text (LINNAEUS). some of them are even mixed with two kinds of annotation levels, such as GE2011, which includes both abstract and full text-level annotations. They can be treated in a unfied way.
 
 #### Instance level
 The annotation unit is an instance, e.g. a sentence annotated with entity labels (CONLL-2003, JNLPBA-2004), or a relation instance with a relation type (SemEval-2010).
@@ -24,8 +24,8 @@ Currently, NER and RE are two tasks that can be trained and validated on differe
 
 Before training and validation, if necessary, a full article is broken into several paragraphs, and a paragraph is splitted into several sentences. Thereafter sentences are tokenized and transformed to instances, such as sequences with continuous entity labels for NER and relation instances with discrete relation types for RE. Specially for RE, the entity mentions in a sentence can be blinded to placeholders and two involved entity mentions can also be marked out in different ways.
 
-For NER, Lstm, LstmCrf, Bert, and BertCrf models can be used.
-For RE, Cnn, Lstm, AttLstm, and Bert models can be used.
+For NER, Lstm, LstmCrf[5], Bert, and BertCrf[6] models can be used.
+For RE, Cnn[7], Lstm[8], AttLstm[9], and Bert[10] models can be used.
 
 Currently, the performance on the test set at the last epoch is used as the final results. Additionally during each training epoch, the performance on the validation and test set are displayed for reference. In order to improve time efficiency, "Best" and "early stoping" strategies in terms of performance on the validation set will be adopted later on.
 
@@ -94,4 +94,22 @@ main(op='tv', task='re', wdir='CPR', cpsfiles=('train', 'dev', 'test'), cpsfmts=
 Similarly, the RE model is trained on the first two files and evaluated on the last one.
 
 ### References
+[1] Erik F. Tjong Kim Sang and Fien De Meulder. 2003. Introduction to the CoNLL-2003 shared task: Language-independent named entity recognition. In CoNLL.
 
+[2] Hendrickx, S.N. Kim, Z. Kozareva, P. Nakov,D.´O S´eaghdha, S. Pad´o, M. Pennacchiotti, L. Ro-mano, and S. Szpakowicz. 2010. Semeval-2010 task8: Multi-way classiﬁcation of semantic relations be-tween pairs of nominals. In Proceedings of the 5thInternational Workshop on Semantic Evaluation.
+
+[3] Dogan,R.I. et al. (2014) NCBI disease corpus: a resource for disease name recognition and concept normalization. J. Biomed. Inform., 47, 1–10.
+
+[4] Taboureau O, Nielsen SK, Audouze K, Weinhold N, Edsgrd D, et al. Chemprot: a disease chemical biology database. Nucleic Acids Res. 2011;39:D367–D372.
+
+[5] Habibi,M. et al. (2017) Deep learning with word embeddings improves biomedical named entity recognition. Bioinformatics, 33, i37–i48.
+
+[6] Jinhyuk Lee, Wonjin Yoon, Sungdong Kim, Donghyeon Kim, Sunkyu Kim, Chan Ho So, and Jaewoo Kang. 2019. BioBERT: a pre-trained biomedical language representation model for biomedical text mining. arXiv:1901.08746 [cs]. ArXiv: 1901.08746.
+
+[7] Daojian Zeng, Kang Liu, Siwei Lai, Guangyou Zhou, and Jun Zhao. 2014. Relation classification via convolutional deep neural network. In Proceedings of COLING, pages 2335–2344.
+
+[8] Shu Zhang, Dequan Zheng, Xinchen Hu, and Ming Yang. 2015. Bidirectional long short-term memory networks for relation classification.
+
+[9] Peng Zhou, Wei Shi, Jun Tian, Zhenyu Qi, Bingchen Li, Hongwei Hao, and Bo Xu. 2016. Attention-based bidirectional long short-term memory networks for relation classification. In The 54th Annual Meeting of the Association for Computational Linguistics, page 207.
+
+[10] Shanchan Wu and Yifan He. 2019. Enriching pretrained language model with entity information for relation classification. CoRR, abs/1905.08284.
