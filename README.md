@@ -30,18 +30,20 @@ For RE, Cnn, Lstm, AttLstm, and Bert models can be used.
 Currently, the performance on the test set at the last epoch is used as the final results. Additionally during each training epoch, the performance on the validation and test set are displayed for reference. In order to improve time efficiency, "Best" and "early stoping" strategies in terms of performance on the validation set will be adopted later on.
 
 ### Prediction
-The final prediction result is the performance(f1) of the model on test set. 
-There are two kinds of performance, instance-level and abstract-level.
+The derived model can be used to recognize new entity mentions from a biomedical literature (NER), or to identify the relationship between two recognized entity mentions. In this scenario, no annotations are needed and no performance will be provided.
 
-### usage and example
+## Usage and Examples
+### Options
+Training parameters and data processing options are first initialized using the class of OptionConfig as follows:
 ```shell
-options = OptionConfig(model_name='LstmCrf', epochs=15, batch_size=32,
-                       valid_ratio=0.1, verbose=3,
-                       fold_num=10, fold_num_run=1,
+elist = ('GENE', 'CHEM')
+options = OptionConfig(model_name='LstmCrf', epochs=15, 
+                       batch_size=32, valid_ratio=0.1, verbose=3,
                        bld_ent_types=elist, diff_ent_type=0, mark_ent_pair=1,
-                       case_sensitive=0, test_ent_pred=0)
+                       )
 (tcfg, _) = options.parse_args()
 ```
+Initialized options are packed into the variable *tcfg*, which is passed to the main() function.
 OptionConfig can pass some option parser during the training procedure: 
 model_name, epochs and batch_size are model, epoches and batch size used in training; 
 
