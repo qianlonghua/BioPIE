@@ -1,10 +1,9 @@
 # BioPIE：Platform for Biomedical Information Extraction
-The repository provides the source code for BioPIE, a deep learning research and development platform designed for information extraction in biomedical domain. It can deal with biomedical corpora with different annotation levels in a unified way, train and validate DL models including CNN, LSTM, AttLSTM, LSTMBERT and and predict 
-It includes dataset processing and model training for various information extraction tasks such as named entity recognition, relation extraction and etc.
+The repository provides the source code for BioPIE, a deep learning (DL)-based research and development platform designed for information extraction, i.e., NER (Named Entity Recognition) and RE (Relation Extraction) in biomedical domain. It can deal with biomedical corpora with different annotation levels in a unified way, train and validate multiple fundamental DL models, such as CNN, LSTM, Att-LSTM, LSTM-CRF, BERT and BERT-CRF etc.
 
-### data format
-For each corpus, there are four kinds of labeling format: instance-level(CORLL2003, semeval2010), sentence-level(BC2GM, BEL), 
-abstract-level(NCBI, CPR) and fulltext-level (LINNAEUS). Dataset can be reviewed and processed according to its labeling format. 
+## corpus format
+For biomedical corpora, there are basically four kinds of annotation levels: instance(CONLL-2003, SemEval-2010, oooops, they are not biomedical-related), sentence(BC2GM, BEL), abstract(NCBI, CPR) and full-text (LINNAEUS). some of them are even mixed with two kinds of annotation levels, such as GE2011, which includes both abstract and full text-level annotations.
+Dataset can be reviewed and processed according to its labeling format. 
 For different corpus, task config file, corpus statistic file and word dict file will be saved for further usage.
 
 ### train and validate
